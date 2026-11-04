@@ -1,9 +1,5 @@
 # Feed System 学习项目
 
-以 [feedsystem_video_go](https://github.com/LeoninCS/feedsystem_video_go) 为参考，学习用 Go 编写 Feed 系统后端。前端复制自该项目，后端由我们逐步手写。
-
-前端来源版本：`7c1c27d179bf22246931d249267a57df8b5cca4b`。原仓库当前未发现许可证文件；本项目先用于本地学习，公开或再分发前需要确认原作者的授权。
-
 ## 目录
 
 - `frontend/`：原项目的 Vue 前端。
