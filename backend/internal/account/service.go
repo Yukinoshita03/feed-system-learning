@@ -3,12 +3,16 @@ package account
 import (
 	"context"
 	"errors"
-	"feed-system-learning/internal/auth"
-	"gorm.io/gorm"
+	"net/url"
+	"strings"
 	"time"
+	"unicode/utf8"
+
+	"feed-system-learning/internal/auth"
 
 	"github.com/go-sql-driver/mysql"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 var ErrUsernameTaken = errors.New("用户名已存在")
@@ -18,8 +22,19 @@ const mysqlDuplicateEntry uint16 = 1062
 var ErrInvalidCredentials = errors.New("用户名或密码错误")
 var ErrInvalidRefreshToken = errors.New("刷新 token 无效或已过期")
 var ErrSessionExpired = errors.New("登录状态已失效")
+var ErrNewUsernameRequired = errors.New("新用户名不能为空")
+var ErrUsernameTooLong = errors.New("用户名不能超过 191 个字符")
+var ErrPasswordInvalid = errors.New("密码不能为空，且不能超过 72 字节")
+var ErrPasswordFieldsRequired = errors.New("用户名、旧密码和新密码不能为空")
+var ErrProfileEmpty = errors.New("没有提供要更新的资料")
+var ErrAvatarURLInvalid = errors.New("头像地址格式不正确")
+var ErrBioTooLong = errors.New("个人简介不能超过 255 个字符")
 
 const refreshTokenLifetime = 7 * 24 * time.Hour
+const maxUsernameRunes = 191
+const maxPasswordBytes = 72
+const maxBioRunes = 255
+const maxAvatarURLBytes = 512
 
 type AccountService struct {
 	repo   *AccountRepository
@@ -33,11 +48,17 @@ func NewAccountService(repo *AccountRepository, tokens *auth.TokenManager) *Acco
 	}
 }
 func (s *AccountService) ValidateRegistration(username, password string) error {
-	if username == "" {
+	if strings.TrimSpace(username) == "" {
 		return errors.New("用户名不能为空")
+	}
+	if utf8.RuneCountInString(username) > maxUsernameRunes {
+		return ErrUsernameTooLong
 	}
 	if password == "" {
 		return errors.New("密码不能为空")
+	}
+	if len([]byte(password)) > maxPasswordBytes {
+		return ErrPasswordInvalid
 	}
 	return nil
 }
@@ -166,4 +187,122 @@ func (s *AccountService) Logout(ctx context.Context, accountID uint, accessHash 
 // GetByID 查询当前登录账号，数据库查询由 Repo 负责。
 func (s *AccountService) GetByID(ctx context.Context, id uint) (*Account, error) {
 	return s.repo.FindByID(ctx, id)
+}
+
+// GetByUsername returns an account for public profile lookup.
+func (s *AccountService) GetByUsername(ctx context.Context, username string) (*Account, error) {
+	return s.repo.FindByUsername(ctx, strings.TrimSpace(username))
+}
+
+// Rename updates the account name and rotates the active access token.
+func (s *AccountService) Rename(ctx context.Context, accountID uint, oldAccessHash, newUsername string) (string, error) {
+	newUsername = strings.TrimSpace(newUsername)
+	if newUsername == "" {
+		return "", ErrNewUsernameRequired
+	}
+	if utf8.RuneCountInString(newUsername) > maxUsernameRunes {
+		return "", ErrUsernameTooLong
+	}
+
+	token, err := s.tokens.GenerateToken(accountID, newUsername)
+	if err != nil {
+		return "", err
+	}
+	err = s.repo.RenameWithToken(ctx, accountID, oldAccessHash, newUsername, auth.HashToken(token))
+	if err != nil {
+		var mysqlErr *mysql.MySQLError
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlDuplicateEntry {
+			return "", ErrUsernameTaken
+		}
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", ErrSessionExpired
+		}
+		return "", err
+	}
+	return token, nil
+}
+
+// ChangePassword verifies the old password, stores a bcrypt hash for the new
+// one, and revokes all existing access and refresh credentials atomically.
+func (s *AccountService) ChangePassword(ctx context.Context, username, oldPassword, newPassword string) error {
+	username = strings.TrimSpace(username)
+	if username == "" || oldPassword == "" || newPassword == "" {
+		return ErrPasswordFieldsRequired
+	}
+	if len([]byte(newPassword)) > maxPasswordBytes {
+		return ErrPasswordInvalid
+	}
+	account, err := s.repo.FindByUsername(ctx, username)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return ErrInvalidCredentials
+	}
+	if err != nil {
+		return err
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(account.Password), []byte(oldPassword)); err != nil {
+		return ErrInvalidCredentials
+	}
+
+	newPasswordHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	err = s.repo.ChangePassword(ctx, account.ID, account.Password, string(newPasswordHash))
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		// The password changed after the lookup; do not overwrite the newer value.
+		return ErrInvalidCredentials
+	}
+	return err
+}
+
+func (s *AccountService) UpdateAvatar(ctx context.Context, accountID uint, avatarURL string) error {
+	return s.repo.UpdateAvatar(ctx, accountID, avatarURL)
+}
+
+// UpdateProfile updates only fields present in the request. A provided empty
+// string clears that field.
+func (s *AccountService) UpdateProfile(ctx context.Context, accountID uint, req UpdateProfileRequest) error {
+	updates := make(map[string]any, 2)
+	if req.AvatarURL != nil {
+		avatarURL, err := normalizeAvatarURL(*req.AvatarURL)
+		if err != nil {
+			return err
+		}
+		updates["avatar_url"] = avatarURL
+	}
+	if req.Bio != nil {
+		bio := strings.TrimSpace(*req.Bio)
+		if utf8.RuneCountInString(bio) > maxBioRunes {
+			return ErrBioTooLong
+		}
+		updates["bio"] = bio
+	}
+	if len(updates) == 0 {
+		return ErrProfileEmpty
+	}
+	return s.repo.UpdateProfile(ctx, accountID, updates)
+}
+
+func normalizeAvatarURL(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if len([]byte(value)) > maxAvatarURLBytes {
+		return "", ErrAvatarURLInvalid
+	}
+	if value == "" {
+		return "", nil
+	}
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return "", ErrAvatarURLInvalid
+	}
+	if parsed.IsAbs() {
+		if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			return "", ErrAvatarURLInvalid
+		}
+		return value, nil
+	}
+	if !strings.HasPrefix(value, "/static/") {
+		return "", ErrAvatarURLInvalid
+	}
+	return value, nil
 }

@@ -5,9 +5,11 @@ import { useRouter } from 'vue-router'
 import AppShell from '../components/AppShell.vue'
 import { ApiError } from '../api/client'
 import * as accountApi from '../api/account'
+import { useAuthStore } from '../stores/auth'
 import { useToastStore } from '../stores/toast'
 
 const router = useRouter()
+const auth = useAuthStore()
 const toast = useToastStore()
 
 const busy = ref(false)
@@ -26,6 +28,7 @@ async function submit() {
   busy.value = true
   try {
     await accountApi.changePassword(username, oldPassword, newPassword)
+    auth.clearTokens()
     toast.success('密码已修改，请重新登录')
     await router.push('/account')
   } catch (e) {

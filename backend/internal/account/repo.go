@@ -1,8 +1,11 @@
 package account
 
-import "gorm.io/gorm"
-import "context"
-import "time"
+import (
+	"context"
+	"time"
+
+	"gorm.io/gorm"
+)
 
 type AccountRepository struct {
 	db *gorm.DB
@@ -38,6 +41,58 @@ func (r *AccountRepository) FindByID(ctx context.Context, id uint) (*Account, er
 		return nil, result.Error
 	}
 	return &account, nil
+}
+
+// RenameWithToken changes the username and active access token together.
+// Matching the previous token hash prevents an old request from replacing a
+// newer session after the user has logged in elsewhere.
+func (r *AccountRepository) RenameWithToken(ctx context.Context, id uint, oldAccessHash, newUsername, newAccessHash string) error {
+	result := r.db.WithContext(ctx).Model(&Account{}).
+		Where("id = ? AND access_token_hash = ?", id, oldAccessHash).
+		Updates(map[string]any{
+			"username":          newUsername,
+			"access_token_hash": newAccessHash,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+// ChangePassword revokes the current access and refresh credentials in the
+// same database update as the password change.
+func (r *AccountRepository) ChangePassword(ctx context.Context, id uint, currentPasswordHash, newPasswordHash string) error {
+	result := r.db.WithContext(ctx).Model(&Account{}).
+		Where("id = ? AND password = ?", id, currentPasswordHash).
+		Updates(map[string]any{
+			"password":           newPasswordHash,
+			"access_token_hash":  nil,
+			"refresh_token_hash": nil,
+			"refresh_expires_at": nil,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+func (r *AccountRepository) UpdateAvatar(ctx context.Context, id uint, avatarURL string) error {
+	result := r.db.WithContext(ctx).Model(&Account{}).
+		Where("id = ?", id).
+		Update("avatar_url", avatarURL)
+	return result.Error
+}
+
+func (r *AccountRepository) UpdateProfile(ctx context.Context, id uint, fields map[string]any) error {
+	return r.db.WithContext(ctx).Model(&Account{}).
+		Where("id = ?", id).
+		Updates(fields).Error
 }
 
 // SaveSession 同时替换账号的访问和刷新凭证。

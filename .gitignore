@@ -5,3 +5,8 @@ backend/cmd/cmd
 .vscode/
 .DS_Store
 .env
+__pycache__/
+.pytest_cache/
+/.venv/
+reports/allure-results/
+reports/allure-report/
