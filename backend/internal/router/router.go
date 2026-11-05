@@ -4,12 +4,14 @@ import (
 	"feed-system-learning/internal/account"
 	"feed-system-learning/internal/auth"
 	"feed-system-learning/internal/middleware"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
-func SetRouter(db *gorm.DB, tokens *auth.TokenManager) *gin.Engine {
+func SetRouter(db *gorm.DB, tokens *auth.TokenManager, redisClient *redis.Client, accessTokenTTL time.Duration) *gin.Engine {
 	r := gin.Default()
 
 	r.GET("/healthz", func(c *gin.Context) {
@@ -20,7 +22,7 @@ func SetRouter(db *gorm.DB, tokens *auth.TokenManager) *gin.Engine {
 	// Uploaded avatars are served from the same local directory used by upload.
 	r.Static("/static", account.UploadDirectory())
 
-	accountrepo := account.NewAccountRepository(db)
+	accountrepo := account.NewAccountRepository(db, redisClient, accessTokenTTL)
 	accountservice := account.NewAccountService(accountrepo, tokens)
 	accounthandler := account.NewAccountHandler(accountservice)
 

@@ -25,7 +25,7 @@ func (s testStore) IsAccessTokenActive(_ context.Context, _ uint, _ string) (boo
 
 func TestRequireJWT(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	manager, _, err := auth.NewTokenManager("test-secret")
+	manager, _, err := auth.NewTokenManager("test-secret", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

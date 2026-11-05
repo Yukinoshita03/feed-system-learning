@@ -1,19 +1,26 @@
 package db
 
 import (
-    "feed-system-learning/internal/account"
+	"feed-system-learning/internal/account"
 
-    "gorm.io/driver/mysql"
-    "gorm.io/gorm"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+
+	"github.com/redis/go-redis/v9"
 )
 
-func NewDB(dsn string) (*gorm.DB,error){
-	database , err := gorm.Open(mysql.Open(dsn),&gorm.Config{})
-	if err != nil{
-		return nil,err
+func NewDB(dsn string) (*gorm.DB, error) {
+	database, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return nil, err
 	}
-	return database,nil
+	return database, nil
 }
-func AutoMigrate(database *gorm.DB) error{
+func NewRedis(opt *redis.Options) *redis.Client {
+	client := redis.NewClient(opt)
+
+	return client
+}
+func AutoMigrate(database *gorm.DB) error {
 	return database.AutoMigrate(&account.Account{})
 }

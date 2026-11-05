@@ -10,9 +10,10 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// TokenManager 保存签发 JWT 所需的密钥。
+// TokenManager 保存签名密钥和注入的访问凭证有效期。
 type TokenManager struct {
-	secret []byte
+	secret         []byte
+	accessTokenTTL time.Duration
 }
 
 // Claims 是 token 中保存的账号信息和标准时间字段。
@@ -23,18 +24,21 @@ type Claims struct {
 }
 
 // NewTokenManager 在未配置密钥时为当前进程生成临时密钥。
-func NewTokenManager(secret string) (*TokenManager, bool, error) {
+func NewTokenManager(secret string, accessTokenTTL time.Duration) (*TokenManager, bool, error) {
+	if accessTokenTTL < time.Second {
+		return nil, false, errors.New("access token 有效期至少为 1 秒")
+	}
 	if secret != "" {
-		return &TokenManager{secret: []byte(secret)}, false, nil
+		return &TokenManager{secret: []byte(secret), accessTokenTTL: accessTokenTTL}, false, nil
 	}
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		return nil, false, err
 	}
-	return &TokenManager{secret: key}, true, nil
+	return &TokenManager{secret: key, accessTokenTTL: accessTokenTTL}, true, nil
 }
 
-// GenerateToken 沿用参考项目的字段和 15 分钟有效期。
+// GenerateToken 按注入的有效期签发访问 JWT。
 func (m *TokenManager) GenerateToken(accountID uint, username string) (string, error) {
 	// 保证同一秒连续登录或刷新时，签发的 token 也能互相区分。
 	identifier := make([]byte, 16)
@@ -46,7 +50,7 @@ func (m *TokenManager) GenerateToken(accountID uint, username string) (string, e
 		"account_id": accountID,
 		"username":   username,
 		"jti":        hex.EncodeToString(identifier),
-		"exp":        now.Add(15 * time.Minute).Unix(),
+		"exp":        now.Add(m.accessTokenTTL).Unix(),
 		"iat":        now.Unix(),
 		"nbf":        now.Unix(),
 	}

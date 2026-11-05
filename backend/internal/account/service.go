@@ -166,7 +166,7 @@ func (s *AccountService) RefreshAccessToken(ctx context.Context, refreshToken st
 		return nil, err
 	}
 	// 防止退出登录后，先前已开始的刷新请求再次写入访问凭证。
-	err = s.repo.UpdateAccessTokenForRefresh(ctx, account.ID, refreshHash, auth.HashToken(token), time.Now())
+	err = s.repo.UpdateAccessTokenForRefresh(ctx, account.ID, refreshHash, auth.HashToken(token))
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrInvalidRefreshToken
 	}
