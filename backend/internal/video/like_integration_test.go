@@ -44,7 +44,7 @@ func newLikeFixture(t *testing.T) *likeFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := database.AutoMigrate(&account.Account{}, &Video{}, &Like{}); err != nil {
+	if err := database.AutoMigrate(&account.Account{}, &Video{}, &Like{}, &Comment{}); err != nil {
 		t.Fatal(err)
 	}
 	f := &likeFixture{db: database}
@@ -74,7 +74,7 @@ func newLikeFixture(t *testing.T) *likeFixture {
 	}
 	t.Cleanup(func() {
 		for _, item := range f.items {
-			if err := database.Where("video_id = ?", item.ID).Delete(&Like{}).Error; err != nil {
+			if err := database.Where("video_id = ?", item.ID).Delete(&Like{}, &Comment{}).Error; err != nil {
 				t.Error(err)
 			}
 			if err := database.Delete(&item).Error; err != nil {

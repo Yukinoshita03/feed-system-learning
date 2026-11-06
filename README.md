@@ -25,7 +25,7 @@
 
 ## 视频资料 CRUD
 
-`Video` 包含七个字段：`id`、`author_id`、`title`、`play_url`、`cover_url`、`likes_count`、`create_time`。新建视频记录时由 GORM 自动填写发布时间，点赞数默认为 0；启动后自动迁移 `videos`、`likes` 表及索引。旧记录的真实发布时间无法自动还原。
+`Video` 包含八个字段：`id`、`author_id`、`title`、`play_url`、`cover_url`、`likes_count`、`comments_count`、`create_time`。新建视频记录时由 GORM 自动填写发布时间，点赞数默认为 0；启动后自动迁移 `videos`、`likes` 表及索引。旧记录的真实发布时间无法自动还原。
 
 | 接口（均为 POST） | 登录要求 | 请求内容 |
 | --- | --- | --- |
@@ -157,3 +157,7 @@ export ACCESS_TOKEN_TTL='15m'
 ## 账号接口自动化测试
 
 pytest + Requests + Allure 用例位于 `tests/api/`。请使用专用测试数据库启动后端，并显式设置 `FEED_API_BASE_URL`；测试会注册账号，不要指向包含真实学习数据的数据库。测试依赖和命令见 [`tests/README.md`](tests/README.md)。
+
+## 社交业务 CRUD
+
+已接入评论发布、游标分页查询和本人删除，视频删除会清理关联评论；评论数与记录在同一事务更新，并清除详情缓存。接口与参数见 [CRUD 接口说明](docs/CRUD接口说明.md)。

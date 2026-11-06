@@ -16,14 +16,15 @@ type FeedAuthor struct {
 
 // FeedVideoItem 是首页展示的一条视频，区别于数据库里的 Video 记录。
 type FeedVideoItem struct {
-	ID         uint       `json:"id"`
-	Author     FeedAuthor `json:"author"`
-	Title      string     `json:"title"`
-	PlayURL    string     `json:"play_url"`
-	CoverURL   string     `json:"cover_url"`
-	CreateTime int64      `json:"create_time"`
-	LikesCount int64      `json:"likes_count"`
-	IsLiked    bool       `json:"is_liked"`
+	ID            uint       `json:"id"`
+	Author        FeedAuthor `json:"author"`
+	Title         string     `json:"title"`
+	PlayURL       string     `json:"play_url"`
+	CoverURL      string     `json:"cover_url"`
+	CreateTime    int64      `json:"create_time"`
+	LikesCount    int64      `json:"likes_count"`
+	IsLiked       bool       `json:"is_liked"`
+	CommentsCount int64      `json:"comments_count"`
 }
 
 // ListLatestResponse 包含本页视频以及下一页的时间、ID 游标。

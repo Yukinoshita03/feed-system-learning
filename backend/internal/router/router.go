@@ -57,6 +57,14 @@ func SetRouter(db *gorm.DB, tokens *auth.TokenManager, redisClient *redis.Client
 	protectedVideoRoutes.POST("/update", videohandler.UpdateVideo)
 	protectedVideoRoutes.POST("/delete", videohandler.DeleteVideo)
 
+	commentrepo := video.NewCommentRepository(db, videorepo)
+	commenthandler := video.NewCommentHandler(video.NewCommentService(commentrepo))
+	comments := r.Group("/comment")
+	comments.POST("/list", commenthandler.List)
+	comments.POST("/listAll", commenthandler.ListAll)
+	comments.POST("/publish", middleware.RequireJWT(tokens, accountrepo), commenthandler.Publish)
+	comments.POST("/delete", middleware.RequireJWT(tokens, accountrepo), commenthandler.Delete)
+
 	likerepo := video.NewLikeRepository(db, videorepo)
 	likeservice := video.NewLikeService(likerepo)
 	likehandler := video.NewLikeHandler(likeservice)

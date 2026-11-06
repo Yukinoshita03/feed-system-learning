@@ -34,6 +34,8 @@ export type Video = {
   likes_count: number
 }
 
+export type CommentPage = { comments: Comment[]; next_id: number; has_more: boolean }
+
 export type Comment = {
   id: number
   username: string

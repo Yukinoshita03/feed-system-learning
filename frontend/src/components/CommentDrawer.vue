@@ -17,6 +17,8 @@ const drawer = reactive({
   loading: false,
   error: '',
   comments: [] as Comment[],
+  nextId: 0,
+  hasMore: false,
   content: '',
 })
 
@@ -31,12 +33,15 @@ function close() {
   emit('close')
 }
 
-async function loadComments() {
+async function loadComments(append = false) {
   if (!props.video) return
   drawer.loading = true
   drawer.error = ''
   try {
-    drawer.comments = await commentApi.listAll(props.video.id)
+    const page = await commentApi.listPage(props.video.id, append ? drawer.nextId : 0)
+    drawer.comments = append ? [...drawer.comments, ...page.comments] : page.comments
+    drawer.nextId = page.next_id
+    drawer.hasMore = page.has_more
   } catch (e) {
     drawer.error = e instanceof ApiError ? e.message : String(e)
   } finally {
@@ -113,12 +118,13 @@ defineExpose({ loadComments })
             <button v-if="canDeleteComment(c)" class="chip danger" type="button" :disabled="drawer.loading" @click="deleteComment(c.id)">删除</button>
           </div>
         </div>
+<button v-if="drawer.hasMore" class="chip" type="button" :disabled="drawer.loading" @click="loadComments(true)">加载更多评论</button>
       </div>
 
       <div class="drawer-foot">
-        <textarea v-model="drawer.content" placeholder="说点什么…" :disabled="drawer.loading" />
+        <textarea v-model="drawer.content" maxlength="1000" placeholder="说点什么…" :disabled="drawer.loading" />
         <div class="row" style="justify-content: space-between; margin-top: 8px">
-          <button class="chip" type="button" :disabled="drawer.loading" @click="loadComments">刷新</button>
+          <button class="chip" type="button" :disabled="drawer.loading" @click="loadComments()">刷新</button>
           <button class="chip primary" type="button" :disabled="drawer.loading || !drawer.content.trim()" @click="publishComment">发送</button>
         </div>
       </div>

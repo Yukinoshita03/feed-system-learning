@@ -47,7 +47,7 @@ func newContentFixture(t *testing.T) *contentFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := database.AutoMigrate(&account.Account{}, &video.Video{}, &video.Like{}); err != nil {
+	if err := database.AutoMigrate(&account.Account{}, &video.Video{}, &video.Like{}, &video.Comment{}); err != nil {
 		t.Fatal(err)
 	}
 	redisDB, err := strconv.Atoi(number)

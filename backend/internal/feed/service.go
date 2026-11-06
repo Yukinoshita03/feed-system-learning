@@ -89,14 +89,15 @@ func (s *FeedService) ListLatest(ctx context.Context, req ListLatestRequest, vie
 			author = FeedAuthor{ID: item.AuthorID, Username: "未知用户"}
 		}
 		response.VideoList = append(response.VideoList, FeedVideoItem{
-			ID:         item.ID,
-			Author:     author,
-			Title:      item.Title,
-			PlayURL:    item.PlayURL,
-			CoverURL:   item.CoverURL,
-			CreateTime: item.CreateTime.UnixMilli(),
-			LikesCount: item.LikesCount,
-			IsLiked:    liked[item.ID],
+			ID:            item.ID,
+			Author:        author,
+			Title:         item.Title,
+			PlayURL:       item.PlayURL,
+			CoverURL:      item.CoverURL,
+			CreateTime:    item.CreateTime.UnixMilli(),
+			LikesCount:    item.LikesCount,
+			IsLiked:       liked[item.ID],
+			CommentsCount: item.CommentsCount,
 		})
 	}
 
