@@ -14,3 +14,16 @@
 | `/comment/delete` | `{"comment_id":1}` | 必须 | 删除后的 `comments_count` |
 
 正文去除首尾空白后要求 1～1000 个字符。只能删除自己的评论（越权 403）；视频或评论不存在返回 404。发布和删除在事务中锁定视频、修改评论并同步评论数，提交后使视频详情缓存失效。删除视频会同时清理评论。
+
+## 收藏
+
+以下接口均要求登录：
+
+| POST 路径 | 请求 JSON | 响应 |
+|---|---|---|
+| `/favorite/favorite` | `{"video_id":1}` | `is_favorited`、`favorites_count` |
+| `/favorite/unfavorite` | `{"video_id":1}` | 同上 |
+| `/favorite/isFavorited` | `{"video_id":1}` | `is_favorited` |
+| `/favorite/listMyFavorites` | `{"limit":20,"before_id":0}` | `video_list`、`next_id`、`has_more` |
+
+列表按收藏记录 ID 倒序，游标是收藏关系 ID，视频字段 `id` 仍为视频 ID。重复操作不改变计数；列表只属于当前登录账号。计数修改后清除视频详情缓存；删除视频同步清理收藏关系。当前列表直接查 MySQL，不把个人收藏状态写进公共缓存。

@@ -23,5 +23,5 @@ func NewRedis(opt *redis.Options) *redis.Client {
 	return client
 }
 func AutoMigrate(database *gorm.DB) error {
-	return database.AutoMigrate(&account.Account{}, &video.Video{}, &video.Like{}, &video.Comment{})
+	return database.AutoMigrate(&account.Account{}, &video.Video{}, &video.Like{}, &video.Comment{}, &video.Favorite{})
 }

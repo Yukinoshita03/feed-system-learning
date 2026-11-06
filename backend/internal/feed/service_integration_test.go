@@ -34,7 +34,7 @@ func feedFixture(t *testing.T) (*FeedService, *gorm.DB, []account.Account) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := database.AutoMigrate(&account.Account{}, &video.Video{}, &video.Like{}, &video.Comment{}); err != nil {
+	if err := database.AutoMigrate(&account.Account{}, &video.Video{}, &video.Like{}, &video.Comment{}, &video.Favorite{}); err != nil {
 		t.Fatal(err)
 	}
 	tx := database.Begin()

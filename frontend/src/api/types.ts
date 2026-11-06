@@ -32,6 +32,8 @@ export type Video = {
   cover_url: string
   create_time: string
   likes_count: number
+  favorites_count?: number
+  comments_count?: number
 }
 
 export type CommentPage = { comments: Comment[]; next_id: number; has_more: boolean }
@@ -99,6 +101,8 @@ export type IsLikedResponse = {
 export type LikeResponse = MessageResponse & {
   is_liked: boolean
   likes_count: number
+  favorites_count?: number
+  comments_count?: number
 }
 
 export type GetAllFollowersResponse = {

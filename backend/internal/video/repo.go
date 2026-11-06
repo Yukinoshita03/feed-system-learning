@@ -190,6 +190,9 @@ func (r *VideoRepository) DeleteVideo(ctx context.Context, id, authorID uint) er
 		if err := tx.Where("video_id = ?", id).Delete(&Comment{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("video_id = ?", id).Delete(&Favorite{}).Error; err != nil {
+			return err
+		}
 		return tx.Delete(&item).Error
 	})
 	if err != nil {

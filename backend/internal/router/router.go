@@ -65,6 +65,14 @@ func SetRouter(db *gorm.DB, tokens *auth.TokenManager, redisClient *redis.Client
 	comments.POST("/publish", middleware.RequireJWT(tokens, accountrepo), commenthandler.Publish)
 	comments.POST("/delete", middleware.RequireJWT(tokens, accountrepo), commenthandler.Delete)
 
+	favoriterepo := video.NewFavoriteRepository(db, videorepo)
+	favoritehandler := video.NewFavoriteHandler(video.NewFavoriteService(favoriterepo))
+	favorites := r.Group("/favorite", middleware.RequireJWT(tokens, accountrepo))
+	favorites.POST("/favorite", favoritehandler.Favorite)
+	favorites.POST("/unfavorite", favoritehandler.Unfavorite)
+	favorites.POST("/isFavorited", favoritehandler.IsFavorited)
+	favorites.POST("/listMyFavorites", favoritehandler.List)
+
 	likerepo := video.NewLikeRepository(db, videorepo)
 	likeservice := video.NewLikeService(likerepo)
 	likehandler := video.NewLikeHandler(likeservice)

@@ -44,7 +44,7 @@ func newLikeFixture(t *testing.T) *likeFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := database.AutoMigrate(&account.Account{}, &Video{}, &Like{}, &Comment{}); err != nil {
+	if err := database.AutoMigrate(&account.Account{}, &Video{}, &Like{}, &Comment{}, &Favorite{}); err != nil {
 		t.Fatal(err)
 	}
 	f := &likeFixture{db: database}

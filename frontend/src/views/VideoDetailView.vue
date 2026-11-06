@@ -7,6 +7,7 @@ import UserAvatar from '../components/UserAvatar.vue'
 import { ApiError } from '../api/client'
 import * as commentApi from '../api/comment'
 import * as likeApi from '../api/like'
+import * as favoriteApi from '../api/favorite'
 import type { Comment, Video } from '../api/types'
 import * as videoApi from '../api/video'
 import { useAuthStore } from '../stores/auth'
@@ -26,6 +27,7 @@ const state = reactive({
   error: '',
   video: null as Video | null,
   isLiked: null as boolean | null,
+  isFavorited: false,
   busy: false,
 })
 
@@ -64,6 +66,9 @@ async function loadVideo() {
 }
 
 async function loadIsLiked() {
+  if (auth.isLoggedIn) {
+    try { state.isFavorited = (await favoriteApi.isFavorited(id.value)).is_favorited } catch { state.isFavorited = false }
+  } else { state.isFavorited = false }
   if (!auth.isLoggedIn) {
     state.isLiked = null
     return
@@ -115,6 +120,19 @@ async function toggleLike() {
   } finally {
     state.busy = false
   }
+}
+
+async function toggleFavorite() {
+  if (!state.video) return
+  if (!auth.isLoggedIn) return needLogin()
+  if (state.busy) return
+  state.busy = true
+  try {
+    const result = state.isFavorited ? await favoriteApi.unfavorite(id.value) : await favoriteApi.favorite(id.value)
+    state.isFavorited = result.is_favorited
+    state.video.favorites_count = result.favorites_count
+  } catch (e) { toast.error(e instanceof ApiError ? e.message : String(e)) }
+  finally { state.busy = false }
 }
 
 async function toggleFollow() {
@@ -296,6 +314,11 @@ onMounted(async () => {
             <button class="act" type="button" :disabled="state.busy" @click.stop="toggleLike">
               <span class="icon" :class="{ liked: !!state.isLiked }">♥</span>
               <span class="count">{{ state.video.likes_count }}</span>
+            </button>
+
+            <button class="act" type="button" :disabled="state.busy" :aria-label="state.isFavorited ? '取消收藏' : '收藏视频'" @click.stop="toggleFavorite">
+              <span class="icon" :class="{ liked: state.isFavorited }">★</span>
+              <span class="count">{{ state.video.favorites_count ?? 0 }}</span>
             </button>
 
             <button class="act" type="button" @click.stop="openComments">
