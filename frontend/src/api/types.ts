@@ -94,6 +94,11 @@ export type IsLikedResponse = {
   is_liked: boolean
 }
 
+export type LikeResponse = MessageResponse & {
+  is_liked: boolean
+  likes_count: number
+}
+
 export type GetAllFollowersResponse = {
   followers: Account[]
 }

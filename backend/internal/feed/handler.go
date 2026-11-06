@@ -4,6 +4,8 @@ import (
 	"errors"
 	"net/http"
 
+	"feed-system-learning/internal/middleware"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -25,7 +27,9 @@ func (h *FeedHandler) ListLatest(c *gin.Context) {
 		return
 	}
 
-	result, err := h.service.ListLatest(c.Request.Context(), req)
+	viewerID, _ := c.Get(middleware.AccountIDKey)
+	accountID, _ := viewerID.(uint)
+	result, err := h.service.ListLatest(c.Request.Context(), req, accountID)
 	if err != nil {
 		writeFeedError(c, err)
 		return

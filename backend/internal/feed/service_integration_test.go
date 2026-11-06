@@ -34,7 +34,7 @@ func feedFixture(t *testing.T) (*FeedService, *gorm.DB, []account.Account) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := database.AutoMigrate(&account.Account{}, &video.Video{}); err != nil {
+	if err := database.AutoMigrate(&account.Account{}, &video.Video{}, &video.Like{}); err != nil {
 		t.Fatal(err)
 	}
 	tx := database.Begin()
@@ -49,7 +49,7 @@ func feedFixture(t *testing.T) (*FeedService, *gorm.DB, []account.Account) {
 	if err := tx.Create(&authors).Error; err != nil {
 		t.Fatal(err)
 	}
-	return NewFeedService(NewFeedRepository(tx)), tx, authors
+	return NewFeedService(NewFeedRepository(tx, video.NewVideoRepository(tx, nil), nil)), tx, authors
 }
 
 func seedFeedVideo(t *testing.T, tx *gorm.DB, authorID uint, createdAt time.Time) video.Video {
@@ -83,7 +83,7 @@ func TestFeedPaginationWithTiedTimestamps(t *testing.T) {
 	req := ListLatestRequest{}
 	seen := 0
 	for pageNumber := 0; pageNumber < 3; pageNumber++ {
-		page, err := service.ListLatest(context.Background(), req)
+		page, err := service.ListLatest(context.Background(), req, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -118,7 +118,7 @@ func TestFeedPaginationWithTiedTimestamps(t *testing.T) {
 	if seen != len(seeded) {
 		t.Fatalf("returned %d videos, want %d", seen, len(seeded))
 	}
-	empty, err := service.ListLatest(context.Background(), req)
+	empty, err := service.ListLatest(context.Background(), req, 0)
 	if err != nil || len(empty.VideoList) != 0 || empty.VideoList == nil || empty.HasMore || empty.NextTime != 0 || empty.NextID != 0 {
 		t.Fatalf("end page = %+v, error=%v", empty, err)
 	}
@@ -131,7 +131,7 @@ func TestFeedEmptyAndExactPages(t *testing.T) {
 			for i := 0; i < count; i++ {
 				seedFeedVideo(t, tx, authors[0].ID, time.Now().Add(-time.Hour).Truncate(time.Millisecond))
 			}
-			page, err := service.ListLatest(context.Background(), ListLatestRequest{Limit: 10})
+			page, err := service.ListLatest(context.Background(), ListLatestRequest{Limit: 10}, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -141,7 +141,7 @@ func TestFeedEmptyAndExactPages(t *testing.T) {
 			if count == 20 {
 				page, err = service.ListLatest(context.Background(), ListLatestRequest{
 					Limit: 10, LatestTime: page.NextTime, LatestID: page.NextID,
-				})
+				}, 0)
 				if err != nil || len(page.VideoList) != 10 || page.HasMore {
 					t.Fatalf("exact last page = %+v, error=%v", page, err)
 				}
@@ -160,7 +160,7 @@ func TestFeedUnknownAuthorAndMissingTimestamp(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedFeedVideo(t, tx, authors[0].ID, time.UnixMilli(0))
-	page, err := service.ListLatest(context.Background(), ListLatestRequest{})
+	page, err := service.ListLatest(context.Background(), ListLatestRequest{}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestFeedPropagatesCancellation(t *testing.T) {
 	service, _, _ := feedFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := service.ListLatest(ctx, ListLatestRequest{})
+	_, err := service.ListLatest(ctx, ListLatestRequest{}, 0)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want context.Canceled", err)
 	}

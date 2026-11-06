@@ -104,15 +104,9 @@ async function toggleLike() {
 
   state.busy = true
   try {
-    if (state.isLiked) {
-      await likeApi.unlike(id.value)
-      state.isLiked = false
-      state.video.likes_count = Math.max(0, state.video.likes_count - 1)
-    } else {
-      await likeApi.like(id.value)
-      state.isLiked = true
-      state.video.likes_count += 1
-    }
+    const result = state.isLiked ? await likeApi.unlike(id.value) : await likeApi.like(id.value)
+    state.isLiked = result.is_liked
+    state.video.likes_count = result.likes_count
   } catch (e) {
     const msg = e instanceof ApiError ? e.message : String(e)
     toast.error(msg)

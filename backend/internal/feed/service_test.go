@@ -23,7 +23,7 @@ func TestFeedRejectsInvalidRequest(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			// 非法请求应在访问 Repo 之前被拒绝，因此这里不需要数据库。
 			service := NewFeedService(nil)
-			_, err := service.ListLatest(context.Background(), test.req)
+			_, err := service.ListLatest(context.Background(), test.req, 0)
 			if !errors.Is(err, ErrInvalidFeed) {
 				t.Fatalf("error = %v, want ErrInvalidFeed", err)
 			}

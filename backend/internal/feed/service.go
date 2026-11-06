@@ -20,7 +20,7 @@ func NewFeedService(repo *FeedRepository) *FeedService {
 }
 
 // ListLatest 获取最新视频流；数据库查询由 Repo 完成。
-func (s *FeedService) ListLatest(ctx context.Context, req ListLatestRequest) (ListLatestResponse, error) {
+func (s *FeedService) ListLatest(ctx context.Context, req ListLatestRequest, viewerID uint) (ListLatestResponse, error) {
 	// 1. 默认每页 10 条；限制客户端每页最多取 50 条。
 	if req.Limit == 0 {
 		req.Limit = 10
@@ -72,6 +72,15 @@ func (s *FeedService) ListLatest(ctx context.Context, req ListLatestRequest) (Li
 	for _, author := range authors {
 		authorsByID[author.ID] = author
 	}
+	// 当前用户的点赞关系只在响应时批量查询，不写入公共 Feed 或视频缓存。
+	videoIDs := make([]uint, 0, len(videos))
+	for _, item := range videos {
+		videoIDs = append(videoIDs, item.ID)
+	}
+	liked, err := s.repo.FindLikedVideoIDs(ctx, viewerID, videoIDs)
+	if err != nil {
+		return ListLatestResponse{}, fmt.Errorf("查询点赞状态失败：%w", err)
+	}
 
 	// 4. 把数据库记录转换成首页需要的响应，时间统一使用毫秒时间戳。
 	for _, item := range videos {
@@ -86,9 +95,8 @@ func (s *FeedService) ListLatest(ctx context.Context, req ListLatestRequest) (Li
 			PlayURL:    item.PlayURL,
 			CoverURL:   item.CoverURL,
 			CreateTime: item.CreateTime.UnixMilli(),
-			// 点赞业务接入前，这两个字段使用零值。
-			LikesCount: 0,
-			IsLiked:    false,
+			LikesCount: item.LikesCount,
+			IsLiked:    liked[item.ID],
 		})
 	}
 

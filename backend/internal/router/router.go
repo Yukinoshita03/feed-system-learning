@@ -3,6 +3,7 @@ package router
 import (
 	"feed-system-learning/internal/account"
 	"feed-system-learning/internal/auth"
+	"feed-system-learning/internal/cache"
 	"feed-system-learning/internal/feed"
 	"feed-system-learning/internal/middleware"
 	"feed-system-learning/internal/video"
@@ -13,7 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func SetRouter(db *gorm.DB, tokens *auth.TokenManager, redisClient *redis.Client, accessTokenTTL time.Duration) *gin.Engine {
+func SetRouter(db *gorm.DB, tokens *auth.TokenManager, redisClient *redis.Client, accessTokenTTL time.Duration, dataCache *cache.Client) *gin.Engine {
 	r := gin.Default()
 
 	r.GET("/healthz", func(c *gin.Context) {
@@ -42,7 +43,7 @@ func SetRouter(db *gorm.DB, tokens *auth.TokenManager, redisClient *redis.Client
 	r.POST("/account/updateProfile", middleware.RequireJWT(tokens, accountrepo), accounthandler.UpdateProfile)
 
 	// Repo 接收数据库，Service 接收 Repo，Handler 接收 Service。
-	videorepo := video.NewVideoRepository(db)
+	videorepo := video.NewVideoRepository(db, dataCache)
 	videoservice := video.NewVideoService(videorepo)
 	videohandler := video.NewVideoHandler(videoservice)
 	videoRoutes := r.Group("/video")
@@ -56,11 +57,20 @@ func SetRouter(db *gorm.DB, tokens *auth.TokenManager, redisClient *redis.Client
 	protectedVideoRoutes.POST("/update", videohandler.UpdateVideo)
 	protectedVideoRoutes.POST("/delete", videohandler.DeleteVideo)
 
+	likerepo := video.NewLikeRepository(db, videorepo)
+	likeservice := video.NewLikeService(likerepo)
+	likehandler := video.NewLikeHandler(likeservice)
+	likeRoutes := r.Group("/like", middleware.RequireJWT(tokens, accountrepo))
+	likeRoutes.POST("/like", likehandler.Like)
+	likeRoutes.POST("/unlike", likehandler.Unlike)
+	likeRoutes.POST("/isLiked", likehandler.IsLiked)
+	likeRoutes.POST("/listMyLikedVideos", likehandler.ListMyLikedVideos)
+
 	// 最新视频流同样按 Repo → Service → Handler 注入，允许游客访问。
-	feedrepo := feed.NewFeedRepository(db)
+	feedrepo := feed.NewFeedRepository(db, videorepo, dataCache)
 	feedservice := feed.NewFeedService(feedrepo)
 	feedhandler := feed.NewFeedHandler(feedservice)
-	feedRoutes := r.Group("/feed")
+	feedRoutes := r.Group("/feed", middleware.OptionalJWT(tokens, accountrepo))
 	feedRoutes.POST("/listLatest", feedhandler.ListLatest)
 	return r
 }

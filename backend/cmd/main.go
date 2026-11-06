@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"feed-system-learning/internal/auth"
+	"feed-system-learning/internal/cache"
 	"feed-system-learning/internal/db"
 	"feed-system-learning/internal/router"
 	"log"
@@ -39,6 +40,10 @@ func main() {
 		}
 		accessTokenTTL = parsed
 	}
+	cacheConfig, err := cache.LoadConfig()
+	if err != nil {
+		log.Fatal("业务缓存配置错误：", err)
+	}
 	mydb, err := db.NewDB(dsn)
 	if err != nil {
 		log.Fatal(err)
@@ -63,6 +68,10 @@ func main() {
 		log.Fatal("Redis 连接失败：", err)
 	}
 	log.Printf("Redis 连接成功：%s，DB=%d", redisAddr, redisDB)
+	dataCache, err := cache.New(redisClient, cacheConfig)
+	if err != nil {
+		log.Fatal("初始化业务缓存失败：", err)
+	}
 
 	tokens, temporary, err := auth.NewTokenManager(os.Getenv("JWT_SECRET"), accessTokenTTL)
 	if err != nil {
@@ -71,7 +80,7 @@ func main() {
 	if temporary {
 		log.Print("未设置 JWT_SECRET，使用临时密钥；重启后旧 token 将失效")
 	}
-	r := router.SetRouter(mydb, tokens, redisClient, accessTokenTTL)
+	r := router.SetRouter(mydb, tokens, redisClient, accessTokenTTL, dataCache)
 	addr := os.Getenv("HTTP_ADDR")
 	if addr == "" {
 		addr = ":8081"
