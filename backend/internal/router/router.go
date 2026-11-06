@@ -3,7 +3,9 @@ package router
 import (
 	"feed-system-learning/internal/account"
 	"feed-system-learning/internal/auth"
+	"feed-system-learning/internal/feed"
 	"feed-system-learning/internal/middleware"
+	"feed-system-learning/internal/video"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -19,7 +21,7 @@ func SetRouter(db *gorm.DB, tokens *auth.TokenManager, redisClient *redis.Client
 			"status": "ok",
 		})
 	})
-	// Uploaded avatars are served from the same local directory used by upload.
+	// 头像、视频和封面都从同一个上传目录通过 /static 提供访问。
 	r.Static("/static", account.UploadDirectory())
 
 	accountrepo := account.NewAccountRepository(db, redisClient, accessTokenTTL)
@@ -38,5 +40,27 @@ func SetRouter(db *gorm.DB, tokens *auth.TokenManager, redisClient *redis.Client
 	r.POST("/account/rename", middleware.RequireJWT(tokens, accountrepo), accounthandler.Rename)
 	r.POST("/account/uploadAvatar", middleware.RequireJWT(tokens, accountrepo), accounthandler.UploadAvatar)
 	r.POST("/account/updateProfile", middleware.RequireJWT(tokens, accountrepo), accounthandler.UpdateProfile)
+
+	// Repo 接收数据库，Service 接收 Repo，Handler 接收 Service。
+	videorepo := video.NewVideoRepository(db)
+	videoservice := video.NewVideoService(videorepo)
+	videohandler := video.NewVideoHandler(videoservice)
+	videoRoutes := r.Group("/video")
+	videoRoutes.POST("/getDetail", videohandler.GetDetail)
+	videoRoutes.POST("/listByAuthorID", videohandler.ListByAuthorID)
+	// 新增、修改、删除都先执行登录校验，再进入视频 Handler。
+	protectedVideoRoutes := videoRoutes.Group("", middleware.RequireJWT(tokens, accountrepo))
+	protectedVideoRoutes.POST("/uploadVideo", videohandler.UploadVideo)
+	protectedVideoRoutes.POST("/uploadCover", videohandler.UploadCover)
+	protectedVideoRoutes.POST("/publish", videohandler.CreateVideo)
+	protectedVideoRoutes.POST("/update", videohandler.UpdateVideo)
+	protectedVideoRoutes.POST("/delete", videohandler.DeleteVideo)
+
+	// 最新视频流同样按 Repo → Service → Handler 注入，允许游客访问。
+	feedrepo := feed.NewFeedRepository(db)
+	feedservice := feed.NewFeedService(feedrepo)
+	feedhandler := feed.NewFeedHandler(feedservice)
+	feedRoutes := r.Group("/feed")
+	feedRoutes.POST("/listLatest", feedhandler.ListLatest)
 	return r
 }

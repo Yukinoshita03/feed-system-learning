@@ -247,7 +247,11 @@ async function onPublish() {
   published.value = null
   resetProgress()
   try {
-    const videoRes = await uploadVideoChunked(publishForm.video!)
+    stage.value = '上传视频'
+    // 默认对接已实现的普通上传；分片接口完成后，可通过环境变量启用原流程。
+    const videoRes = import.meta.env.VITE_ENABLE_CHUNK_UPLOAD === 'true'
+      ? await uploadVideoChunked(publishForm.video!)
+      : await videoApi.uploadVideo(publishForm.video!)
 
     stage.value = '上传封面'
     const coverRes = await videoApi.uploadCover(publishForm.cover!)

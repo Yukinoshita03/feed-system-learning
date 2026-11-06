@@ -2,7 +2,7 @@ import { postJson } from './client'
 import { normalizeFeedVideoList } from './normalize'
 import type { ListByFollowingResponse, ListByPopularityResponse, ListLatestResponse, ListLikesCountResponse } from './types'
 
-export async function listLatest(input: { limit: number; latest_time: number }) {
+export async function listLatest(input: { limit: number; latest_time: number; latest_id: number }) {
   const res = await postJson<ListLatestResponse>('/feed/listLatest', input)
   return { ...res, video_list: normalizeFeedVideoList(res.video_list) }
 }

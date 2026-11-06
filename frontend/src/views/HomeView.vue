@@ -123,11 +123,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         <section
           v-for="(item, idx) in filteredItems"
           :key="`${tab}-${item.id}`"
-          v-show="idx >= visibleRange.start && idx <= visibleRange.end"
           class="slide"
           :class="{ active: idx === activeIndex }"
         >
-          <div class="stage" @click="togglePlayPause(activeItem?.id)" @dblclick.prevent="toggleLike(item)">
+          <!-- 保留每一页的滚动占位，只挂载当前及相邻视频的播放内容。 -->
+          <div v-if="idx >= visibleRange.start && idx <= visibleRange.end" class="stage" @click="togglePlayPause(activeItem?.id)" @dblclick.prevent="toggleLike(item)">
             <video
               class="video"
               :ref="(el) => setVideoRef(item.id, el as HTMLVideoElement | null)"
