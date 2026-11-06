@@ -21,7 +21,12 @@ export const useSocialStore = defineStore('social', () => {
   const followerCount = computed(() => followers.value.length)
   const followingCount = computed(() => vloggers.value.length)
 
+  let followersRequest = 0
+  let vloggersRequest = 0
+
   function clear() {
+    followersRequest += 1
+    vloggersRequest += 1
     followers.value = []
     vloggers.value = []
     followersError.value = ''
@@ -40,16 +45,20 @@ export const useSocialStore = defineStore('social', () => {
       return
     }
 
+    const request = ++followersRequest
+    const accountId = auth.claims?.account_id
     followersLoading.value = true
     followersError.value = ''
     try {
       const res = await socialApi.getAllFollowers(vloggerId)
+      if (request !== followersRequest || accountId !== auth.claims?.account_id) return
       followers.value = res.followers
     } catch (e) {
+      if (request !== followersRequest || accountId !== auth.claims?.account_id) return
       followersError.value = e instanceof ApiError ? e.message : String(e)
       followers.value = []
     } finally {
-      followersLoading.value = false
+      if (request === followersRequest) followersLoading.value = false
     }
   }
 
@@ -59,16 +68,20 @@ export const useSocialStore = defineStore('social', () => {
       return
     }
 
+    const request = ++vloggersRequest
+    const accountId = auth.claims?.account_id
     vloggersLoading.value = true
     vloggersError.value = ''
     try {
       const res = await socialApi.getAllVloggers(followerId)
+      if (request !== vloggersRequest || accountId !== auth.claims?.account_id) return
       vloggers.value = res.vloggers
     } catch (e) {
+      if (request !== vloggersRequest || accountId !== auth.claims?.account_id) return
       vloggersError.value = e instanceof ApiError ? e.message : String(e)
       vloggers.value = []
     } finally {
-      vloggersLoading.value = false
+      if (request === vloggersRequest) vloggersLoading.value = false
     }
   }
 

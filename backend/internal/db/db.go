@@ -2,6 +2,7 @@ package db
 
 import (
 	"feed-system-learning/internal/account"
+	"feed-system-learning/internal/social"
 	"feed-system-learning/internal/video"
 
 	"gorm.io/driver/mysql"
@@ -23,5 +24,5 @@ func NewRedis(opt *redis.Options) *redis.Client {
 	return client
 }
 func AutoMigrate(database *gorm.DB) error {
-	return database.AutoMigrate(&account.Account{}, &video.Video{}, &video.Like{}, &video.Comment{}, &video.Favorite{})
+	return database.AutoMigrate(&account.Account{}, &video.Video{}, &video.Like{}, &video.Comment{}, &video.Favorite{}, &social.Follow{})
 }

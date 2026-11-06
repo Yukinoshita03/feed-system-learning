@@ -6,6 +6,7 @@ export function listOrEmpty<T>(value: T[] | null | undefined): T[] {
 
 export function normalizeAccount(value: Account | null | undefined): Account {
   return {
+    ...value,
     id: Number(value?.id ?? 0),
     username: value?.username || '匿名用户',
   }
