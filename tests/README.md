@@ -33,7 +33,7 @@ export PUBLIC_BASE_URL='http://127.0.0.1:8082'
 go run ./cmd
 ```
 
-`go run ./cmd` 会自动迁移账号表和视频表。运行前可用 MySQL 创建空的测试数据库：
+`go run ./cmd` 会自动迁移账号、视频、点赞、评论、收藏、关注和通知表。运行前可用 MySQL 创建空的测试数据库：
 
 ```sql
 CREATE DATABASE feed_system_pytest CHARACTER SET utf8mb4;
@@ -138,10 +138,35 @@ FEED_WEB_BASE_URL='http://127.0.0.1:5174' \
 
 默认使用无头 Chrome。设置 `FEED_UI_HEADLESS=0` 可显示浏览器窗口；可选 `FEED_UI_CHROME_BINARY`、`FEED_UI_CHROMEDRIVER` 指定本机浏览器和驱动路径，否则使用 Selenium 自带的驱动管理能力。每个用例使用独立浏览器会话，显式等待页面状态，失败截图、HTML 和 HTTP 错误响应会附入 Allure。
 
-页面发布默认使用普通上传。前端 `VITE_ENABLE_CHUNK_UPLOAD=true` 开关保留原来的分片流程，需在分片接口完成后启用。当前关注流、点赞榜等接口尚未实现，相关页面可能出现 404；UI 测试覆盖已实现的账号、视频发布/播放、最新视频流和点赞链路。
+页面发布默认使用普通上传。前端 `VITE_ENABLE_CHUNK_UPLOAD=true` 开关保留原来的分片流程，需在分片接口完成后启用。当前关注流、点赞榜等接口尚未实现，相关页面可能出现 404；UI 测试覆盖账号、视频发布/播放、最新视频流、点赞、评论、收藏、关注关系和通知链路。
 
 `test_comments.py` 验证评论发布、分页插入稳定性、计数和缓存失效、作者权限、非法正文、登录要求、并发发布和视频删除清理。
 
 `test_favorites.py` 检查收藏的重复操作、账号隔离、分页顺序、并发计数、视频删除清理、缓存失效、登录要求和非法参数。
 
 `test_social.py` 验证关注身份、双方列表与计数、分页、重复操作、自关注拒绝、非法账号、相互并发关注和公开资料字段。
+
+
+## 社交 CRUD 回归
+
+新增 `test_comments.py`、`test_favorites.py`、`test_social.py`、`test_notifications.py`。在前文隔离环境中运行：
+
+```bash
+python -m pytest tests/api/test_comments.py tests/api/test_favorites.py tests/api/test_social.py tests/api/test_notifications.py -q --alluredir=reports/allure-results
+```
+
+`test_notifications.py` 验证四种业务通知、重复请求去重、自操作排除、按接收人隔离、单条/批量/全量已读、删除、未读筛选、分页和非法参数。
+
+`backend/internal/router/crud_integration_test.go` 在真实 MySQL 中注入计数或通知写入错误，独立查询业务行、通知和视频计数以确认事务回滚；还检查视频删除后不留下互动记录。它要求显式配置 `FEED_TEST_MYSQL_DSN` 指向专用测试库：
+
+```bash
+cd backend
+FEED_TEST_MYSQL_DSN='root@tcp(127.0.0.1:3306)/feed_system_pytest?charset=utf8mb4&parseTime=True&loc=Local' \
+  go test -race ./internal/router -run TestCRUD -count=1 -v
+```
+
+`tests/ui/test_crud_pages.py` 通过真实页面登录，检查评论发布/刷新/删除、收藏/账号列表/刷新/取消、关注/刷新/取关，以及通知全部已读和删除。账号与视频准备走真实 API，页面不注入 token、不模拟接口响应。可按前文启动前后端后运行：
+
+```bash
+python -m pytest tests/ui/test_crud_pages.py -q --alluredir=reports/allure-results
+```

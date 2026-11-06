@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"feed-system-learning/internal/cache"
+	"feed-system-learning/internal/notification"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -32,10 +33,14 @@ func (r *FavoriteRepository) SetFavorited(ctx context.Context, videoID, accountI
 		}
 		exists := err == nil
 		if active && !exists {
-			if err := tx.Create(&Favorite{VideoID: videoID, AccountID: accountID}).Error; err != nil {
+			existing = Favorite{VideoID: videoID, AccountID: accountID}
+			if err := tx.Create(&existing).Error; err != nil {
 				return err
 			}
 			if err := tx.Model(&Video{}).Where("id = ?", videoID).UpdateColumn("favorites_count", gorm.Expr("favorites_count + 1")).Error; err != nil {
+				return err
+			}
+			if err := notification.Record(tx, current.AuthorID, accountID, notification.Favorite, existing.ID, videoID, "收藏了你的视频"); err != nil {
 				return err
 			}
 			current.FavoritesCount++

@@ -14,6 +14,7 @@ import (
 
 	"feed-system-learning/internal/account"
 	"feed-system-learning/internal/cache"
+	"feed-system-learning/internal/notification"
 	"feed-system-learning/internal/video"
 
 	"github.com/redis/go-redis/v9"
@@ -47,7 +48,7 @@ func newContentFixture(t *testing.T) *contentFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := database.AutoMigrate(&account.Account{}, &video.Video{}, &video.Like{}, &video.Comment{}, &video.Favorite{}); err != nil {
+	if err := database.AutoMigrate(&account.Account{}, &video.Video{}, &video.Like{}, &video.Comment{}, &video.Favorite{}, &notification.Notification{}); err != nil {
 		t.Fatal(err)
 	}
 	redisDB, err := strconv.Atoi(number)

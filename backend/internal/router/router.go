@@ -6,6 +6,7 @@ import (
 	"feed-system-learning/internal/cache"
 	"feed-system-learning/internal/feed"
 	"feed-system-learning/internal/middleware"
+	"feed-system-learning/internal/notification"
 	"feed-system-learning/internal/social"
 	"feed-system-learning/internal/video"
 	"time"
@@ -90,6 +91,13 @@ func SetRouter(db *gorm.DB, tokens *auth.TokenManager, redisClient *redis.Client
 	socialRoutes.POST("/isFollowing", socialhandler.IsFollowing)
 	socialRoutes.POST("/getAllFollowers", socialhandler.Followers)
 	socialRoutes.POST("/getAllVloggers", socialhandler.Following)
+
+	notificationhandler := notification.NewHandler(notification.NewService(notification.NewRepository(db)))
+	notificationRoutes := r.Group("/notification", middleware.RequireJWT(tokens, accountrepo))
+	notificationRoutes.POST("/list", notificationhandler.List)
+	notificationRoutes.POST("/unreadCount", notificationhandler.UnreadCount)
+	notificationRoutes.POST("/markRead", notificationhandler.MarkRead)
+	notificationRoutes.POST("/delete", notificationhandler.Delete)
 
 	// 最新视频流同样按 Repo → Service → Handler 注入，允许游客访问。
 	feedrepo := feed.NewFeedRepository(db, videorepo, dataCache)

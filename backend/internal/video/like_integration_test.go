@@ -13,6 +13,7 @@ import (
 
 	"feed-system-learning/internal/account"
 	"feed-system-learning/internal/cache"
+	"feed-system-learning/internal/notification"
 
 	"github.com/redis/go-redis/v9"
 	"gorm.io/driver/mysql"
@@ -44,7 +45,7 @@ func newLikeFixture(t *testing.T) *likeFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := database.AutoMigrate(&account.Account{}, &Video{}, &Like{}, &Comment{}, &Favorite{}); err != nil {
+	if err := database.AutoMigrate(&account.Account{}, &Video{}, &Like{}, &Comment{}, &Favorite{}, &notification.Notification{}); err != nil {
 		t.Fatal(err)
 	}
 	f := &likeFixture{db: database}
@@ -74,7 +75,7 @@ func newLikeFixture(t *testing.T) *likeFixture {
 	}
 	t.Cleanup(func() {
 		for _, item := range f.items {
-			if err := database.Where("video_id = ?", item.ID).Delete(&Like{}, &Comment{}).Error; err != nil {
+			if err := database.Where("video_id = ?", item.ID).Delete(&Like{}).Error; err != nil {
 				t.Error(err)
 			}
 			if err := database.Delete(&item).Error; err != nil {
@@ -91,6 +92,9 @@ func newLikeFixture(t *testing.T) *likeFixture {
 			}
 		}
 		for _, user := range f.accounts {
+			if err := database.Where("receiver_id = ? OR actor_id = ?", user.ID, user.ID).Delete(&notification.Notification{}).Error; err != nil {
+				t.Error(err)
+			}
 			if err := database.Delete(&user).Error; err != nil {
 				t.Error(err)
 			}

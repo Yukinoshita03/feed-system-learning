@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"feed-system-learning/internal/account"
+	"feed-system-learning/internal/notification"
 	"feed-system-learning/internal/video"
 
 	"gorm.io/driver/mysql"
@@ -34,7 +35,7 @@ func feedFixture(t *testing.T) (*FeedService, *gorm.DB, []account.Account) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := database.AutoMigrate(&account.Account{}, &video.Video{}, &video.Like{}, &video.Comment{}, &video.Favorite{}); err != nil {
+	if err := database.AutoMigrate(&account.Account{}, &video.Video{}, &video.Like{}, &video.Comment{}, &video.Favorite{}, &notification.Notification{}); err != nil {
 		t.Fatal(err)
 	}
 	tx := database.Begin()

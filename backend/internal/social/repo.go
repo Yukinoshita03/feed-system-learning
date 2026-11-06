@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"feed-system-learning/internal/account"
+	"feed-system-learning/internal/notification"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -29,7 +30,11 @@ func (r *Repository) SetFollowing(ctx context.Context, actorID, targetID uint, a
 		}
 		exists := err == nil
 		if active && !exists {
-			if err := tx.Create(&Follow{FollowerID: actorID, VloggerID: targetID}).Error; err != nil {
+			existing = Follow{FollowerID: actorID, VloggerID: targetID}
+			if err := tx.Create(&existing).Error; err != nil {
+				return err
+			}
+			if err := notification.Record(tx, targetID, actorID, notification.Follow, existing.ID, 0, "关注了你"); err != nil {
 				return err
 			}
 		} else if !active && exists {

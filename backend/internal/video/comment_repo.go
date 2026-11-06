@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"feed-system-learning/internal/cache"
+	"feed-system-learning/internal/notification"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -30,6 +31,9 @@ func (r *CommentRepository) Create(ctx context.Context, item *Comment) (int64, e
 		}
 		if err := tx.Model(&Video{}).Where("id = ?", item.VideoID).
 			UpdateColumn("comments_count", gorm.Expr("comments_count + 1")).Error; err != nil {
+			return err
+		}
+		if err := notification.Record(tx, current.AuthorID, item.AuthorID, notification.Comment, item.ID, item.VideoID, item.Content); err != nil {
 			return err
 		}
 		count = current.CommentsCount + 1

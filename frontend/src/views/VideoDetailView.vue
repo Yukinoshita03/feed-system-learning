@@ -66,19 +66,20 @@ async function loadVideo() {
 }
 
 async function loadIsLiked() {
-  if (auth.isLoggedIn) {
-    try { state.isFavorited = (await favoriteApi.isFavorited(id.value)).is_favorited } catch { state.isFavorited = false }
-  } else { state.isFavorited = false }
-  if (!auth.isLoggedIn) {
-    state.isLiked = null
-    return
-  }
+  state.busy = true
   try {
-    const res = await likeApi.isLiked(id.value)
-    state.isLiked = res.is_liked
+    if (!auth.isLoggedIn) {
+      state.isLiked = null
+      state.isFavorited = false
+      return
+    }
+    const [liked, favorite] = await Promise.all([likeApi.isLiked(id.value), favoriteApi.isFavorited(id.value)])
+    state.isLiked = liked.is_liked
+    state.isFavorited = favorite.is_favorited
   } catch {
     state.isLiked = null
-  }
+    state.isFavorited = false
+  } finally { state.busy = false }
 }
 
 async function play() {

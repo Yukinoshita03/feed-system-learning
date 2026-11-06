@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"feed-system-learning/internal/cache"
+	"feed-system-learning/internal/notification"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -35,11 +36,15 @@ func (r *LikeRepository) SetLiked(ctx context.Context, videoID, accountID uint, 
 		}
 		exists := err == nil
 		if liked && !exists {
-			if err := tx.Create(&Like{VideoID: videoID, AccountID: accountID}).Error; err != nil {
+			existing = Like{VideoID: videoID, AccountID: accountID}
+			if err := tx.Create(&existing).Error; err != nil {
 				return err
 			}
 			if err := tx.Model(&Video{}).Where("id = ?", videoID).
 				UpdateColumn("likes_count", gorm.Expr("likes_count + 1")).Error; err != nil {
+				return err
+			}
+			if err := notification.Record(tx, current.AuthorID, accountID, notification.Like, existing.ID, videoID, "赞了你的视频"); err != nil {
 				return err
 			}
 			current.LikesCount++
