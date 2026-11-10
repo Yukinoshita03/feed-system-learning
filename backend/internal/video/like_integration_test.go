@@ -45,7 +45,7 @@ func newLikeFixture(t *testing.T) *likeFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := database.AutoMigrate(&account.Account{}, &Video{}, &Like{}, &Comment{}, &Favorite{}, &notification.Notification{}); err != nil {
+	if err := database.AutoMigrate(&account.Account{}, &Video{}, &Like{}, &Comment{}, &Favorite{}, &notification.Notification{}, &notification.OutboxMessage{}); err != nil {
 		t.Fatal(err)
 	}
 	f := &likeFixture{db: database}
@@ -159,11 +159,17 @@ func TestLikeConcurrentDuplicateRequests(t *testing.T) {
 	actor := f.accounts[1].ID
 	runLikeWorkers(t, 16, func(ctx context.Context, _ int) error { _, err := f.service.Like(ctx, item.ID, actor); return err })
 	f.assertCount(t, item.ID, 1)
+	if count := f.countOutbox(t, item.ID); count != 1 {
+		t.Fatalf("outbox events after duplicate likes=%d, want=1", count)
+	}
 	if err := f.db.Create(&Like{VideoID: item.ID, AccountID: actor}).Error; err == nil {
 		t.Fatal("database accepted a duplicate like")
 	}
 	runLikeWorkers(t, 16, func(ctx context.Context, _ int) error { _, err := f.service.Unlike(ctx, item.ID, actor); return err })
 	f.assertCount(t, item.ID, 0)
+	if count := f.countOutbox(t, item.ID); count != 1 {
+		t.Fatalf("outbox events after unlike=%d, want=1", count)
+	}
 }
 
 func TestLikeConcurrentAccountsAndMixedChanges(t *testing.T) {
@@ -207,6 +213,20 @@ func TestLikeCounterFailureRollsBackRecord(t *testing.T) {
 		t.Fatalf("error=%v, want counter failure", err)
 	}
 	f.assertCount(t, item.ID, 0)
+	if count := f.countOutbox(t, item.ID); count != 0 {
+		t.Fatalf("outbox events after transaction rollback=%d, want=0", count)
+	}
+}
+
+func (f *likeFixture) countOutbox(t *testing.T, videoID uint) int64 {
+	t.Helper()
+	var count int64
+	if err := f.db.Model(&notification.OutboxMessage{}).
+		Where("JSON_EXTRACT(payload, '$.video_id') = ?", videoID).
+		Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	return count
 }
 
 func TestLikeListScopeOrderAndDelete(t *testing.T) {

@@ -3,14 +3,20 @@ package notification
 import (
 	"context"
 	"errors"
+	"feed-system-learning/internal/mq"
 	"feed-system-learning/internal/pagination"
 )
 
 var ErrInvalidNotification = errors.New("请提供 1 到 100 个有效消息 ID，或使用 all=true 标记全部已读")
 
-type Service struct{ repo *Repository }
+type Service struct {
+	repo     *Repository
+	mqClient *mq.Client
+}
 
-func NewService(repo *Repository) *Service { return &Service{repo: repo} }
+func NewService(repo *Repository, mqClient *mq.Client) *Service {
+	return &Service{repo: repo, mqClient: mqClient}
+}
 
 func (s *Service) List(ctx context.Context, receiverID uint, req pagination.Request, unreadOnly bool) (Page, error) {
 	limit, err := req.PageSize()

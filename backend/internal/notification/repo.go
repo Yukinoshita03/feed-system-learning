@@ -67,3 +67,90 @@ func (r *Repository) Delete(ctx context.Context, receiverID, id uint) error {
 	}
 	return nil
 }
+func (r *Repository) ClaimPendingOutbox(
+	ctx context.Context,
+	limit int,
+	claimToken string,
+	lease time.Duration,
+) ([]OutboxMessage, error) {
+	if limit <= 0 || claimToken == "" || lease <= 0 {
+		return nil, fmt.Errorf("limit、claimToken 和 lease 必须有效")
+	}
+
+	now := time.Now().UTC()
+	claimedUntil := now.Add(lease)
+	messages := make([]OutboxMessage, 0, limit)
+
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{
+			Strength: "UPDATE",
+			Options:  "SKIP LOCKED",
+		}).
+			Where("published_at IS NULL").
+			Where("(claimed_until IS NULL OR claimed_until <= ?)", now).
+			Order("id ASC").
+			Limit(limit).
+			Find(&messages).Error; err != nil {
+			return err
+		}
+
+		for i := range messages {
+			if err := tx.Model(&OutboxMessage{}).
+				Where("id = ?", messages[i].ID).
+				Updates(map[string]any{
+					"claim_token":   claimToken,
+					"claimed_until": claimedUntil,
+				}).Error; err != nil {
+				return err
+			}
+			messages[i].ClaimToken = claimToken
+			messages[i].ClaimedUntil = &claimedUntil
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+func (r *Repository) MarkOutboxPublished(ctx context.Context, id uint, claimToken string) error {
+	now := time.Now().UTC()
+	result := r.db.WithContext(ctx).
+		Model(&OutboxMessage{}).
+		Where("id = ? AND published_at IS NULL AND claim_token = ?", id, claimToken).
+		Updates(map[string]any{
+			"published_at":  now,
+			"claim_token":   "",
+			"claimed_until": nil,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("outbox id=%d 的认领已失效或已发布", id)
+	}
+	return nil
+}
+func (r *Repository) CreateLikeNotification(ctx context.Context, event LikeCreatedEvent) error {
+	if event.LikeID == 0 || event.VideoID == 0 ||
+		event.ActorID == 0 || event.ReceiverID == 0 {
+		return fmt.Errorf("点赞通知事件字段无效")
+	}
+	if event.ActorID == event.ReceiverID {
+		return nil
+	}
+	item := Notification{
+		ReceiverID: event.ReceiverID,
+		ActorID:    event.ActorID,
+		Kind:       Like,
+		VideoID:    event.VideoID,
+		Content:    "赞了你的视频",
+		EventKey:   fmt.Sprintf("%s:%d", Like, event.LikeID),
+	}
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "event_key"}},
+			DoNothing: true,
+		}).
+		Create(&item).Error
+}

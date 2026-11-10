@@ -6,6 +6,7 @@ import (
 	"feed-system-learning/internal/cache"
 	"feed-system-learning/internal/feed"
 	"feed-system-learning/internal/middleware"
+	"feed-system-learning/internal/mq"
 	"feed-system-learning/internal/notification"
 	"feed-system-learning/internal/social"
 	"feed-system-learning/internal/video"
@@ -16,7 +17,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func SetRouter(db *gorm.DB, tokens *auth.TokenManager, redisClient *redis.Client, accessTokenTTL time.Duration, dataCache *cache.Client) *gin.Engine {
+func SetRouter(db *gorm.DB, tokens *auth.TokenManager, redisClient *redis.Client, accessTokenTTL time.Duration, dataCache *cache.Client, mqClient *mq.Client) *gin.Engine {
 	r := gin.Default()
 
 	r.GET("/healthz", func(c *gin.Context) {
@@ -92,7 +93,7 @@ func SetRouter(db *gorm.DB, tokens *auth.TokenManager, redisClient *redis.Client
 	socialRoutes.POST("/getAllFollowers", socialhandler.Followers)
 	socialRoutes.POST("/getAllVloggers", socialhandler.Following)
 
-	notificationhandler := notification.NewHandler(notification.NewService(notification.NewRepository(db)))
+	notificationhandler := notification.NewHandler(notification.NewService(notification.NewRepository(db), mqClient))
 	notificationRoutes := r.Group("/notification", middleware.RequireJWT(tokens, accountrepo))
 	notificationRoutes.POST("/list", notificationhandler.List)
 	notificationRoutes.POST("/unreadCount", notificationhandler.UnreadCount)

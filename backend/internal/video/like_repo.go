@@ -2,7 +2,9 @@ package video
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 
 	"feed-system-learning/internal/cache"
 	"feed-system-learning/internal/notification"
@@ -44,8 +46,24 @@ func (r *LikeRepository) SetLiked(ctx context.Context, videoID, accountID uint, 
 				UpdateColumn("likes_count", gorm.Expr("likes_count + 1")).Error; err != nil {
 				return err
 			}
-			if err := notification.Record(tx, current.AuthorID, accountID, notification.Like, existing.ID, videoID, "赞了你的视频"); err != nil {
-				return err
+			if current.AuthorID != accountID {
+				payload, err := json.Marshal(notification.LikeCreatedEvent{
+					LikeID:     existing.ID,
+					VideoID:    videoID,
+					ActorID:    accountID,
+					ReceiverID: current.AuthorID,
+				})
+				if err != nil {
+					return err
+				}
+				outbox := notification.OutboxMessage{
+					EventKey:  fmt.Sprintf("like:%d", existing.ID),
+					EventType: "like.created",
+					Payload:   payload,
+				}
+				if err := tx.Create(&outbox).Error; err != nil {
+					return err
+				}
 			}
 			current.LikesCount++
 		} else if !liked && exists {

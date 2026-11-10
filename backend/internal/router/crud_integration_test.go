@@ -130,14 +130,18 @@ func TestCRUDCommentAndFavoriteRollbackOnCounterFailure(t *testing.T) {
 	}
 }
 
-func TestCRUDNotificationFailureRollsBackAllBusinessKinds(t *testing.T) {
+func TestCRUDNotificationWriteFailureRollsBackAllBusinessKinds(t *testing.T) {
 	for _, kind := range []string{"like", "favorite", "comment", "follow"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newCRUDFixture(t)
 			errInjected := errors.New("injected notification failure")
 			name := "crud:fail-notification"
+			failedTable := "notifications"
+			if kind == "like" {
+				failedTable = "notification_outbox"
+			}
 			if err := f.db.Callback().Create().Before("gorm:create").Register(name, func(tx *gorm.DB) {
-				if tx.Statement.Table == "notifications" {
+				if tx.Statement.Table == failedTable {
 					tx.AddError(errInjected)
 				}
 			}); err != nil {
@@ -158,6 +162,9 @@ func TestCRUDNotificationFailureRollsBackAllBusinessKinds(t *testing.T) {
 			}
 			if !errors.Is(err, errInjected) {
 				t.Fatalf("got %v, want injected failure", err)
+			}
+			if kind == "like" && f.count(t, &notification.OutboxMessage{}, "event_type = ?", "like.created") != 0 {
+				t.Fatal("outbox event survived rollback")
 			}
 			for _, entity := range []any{&video.Like{}, &video.Favorite{}, &video.Comment{}} {
 				if f.count(t, entity, "video_id = ?", f.item.ID) != 0 {
