@@ -76,6 +76,32 @@ func (r *FeedRepository) ListLatest(ctx context.Context, limit int, latestBefore
 	}
 	return videos, nil
 }
+func (r *FeedRepository) ListFollowing(ctx context.Context, viewerID uint, limit int, latestBefore time.Time, idBefore uint) ([]video.Video, error) {
+	if limit <= 0 {
+		return nil, errors.New("查询数量必须大于 0")
+	}
+	if latestBefore.IsZero() != (idBefore == 0) {
+		return nil, errors.New("查询游标必须同时提供时间和 ID")
+	}
+	videos := make([]video.Video, 0)
+	query := r.db.WithContext(ctx).
+		Model(&video.Video{}).
+		Select("videos.*").
+		Joins("JOIN follows ON follows.vlogger_id = videos.author_id").
+		Where("follows.follower_id = ?", viewerID).
+		Where("videos.create_time > ?", time.UnixMilli(0)).
+		Order("videos.create_time DESC, videos.id DESC")
+	if !latestBefore.IsZero() {
+		query = query.Where(
+			"(videos.create_time < ? OR (videos.create_time = ? AND videos.id < ?))",
+			latestBefore, latestBefore, idBefore,
+		)
+	}
+	if err := query.Limit(limit).Find(&videos).Error; err != nil {
+		return nil, err
+	}
+	return videos, nil
+}
 
 // FindAuthorsByIDs 一次查询本页作者的公开资料，避免逐条视频查询作者。
 func (r *FeedRepository) FindAuthorsByIDs(ctx context.Context, ids []uint) ([]FeedAuthor, error) {
