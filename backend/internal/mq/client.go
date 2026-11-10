@@ -3,12 +3,14 @@ package mq
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type Client struct {
+	mu     sync.Mutex
 	config Config
 	conn   *amqp.Connection
 }
@@ -18,35 +20,76 @@ func NewClient(config Config) (*Client, error) {
 		return nil, fmt.Errorf("RabbitMQ URL 不能为空")
 	}
 
-	conn, err := amqp.Dial(config.URL)
+	client := &Client{config: config}
+	if _, err := client.connection(); err != nil {
+		return nil, err
+	}
+
+	return client, nil
+}
+
+// connection 返回当前可用的连接；连接已关闭时重新拨号。
+//
+// amqp.Connection 断了不会自愈，也不存在"重新打开"——它是一条已经建立的
+// 会话。把 Dial 的结果长期保存成字段，就等于把"会断的资源"当成永久对象：
+// 一旦断开，之后所有 OpenChannel 都在一个死对象上操作，重试多少次都失败。
+// 因此每次取连接都检查一次，必要时重新建立。
+func (c *Client) connection() (*amqp.Connection, error) {
+	if c == nil {
+		return nil, fmt.Errorf("RabbitMQ 客户端未初始化")
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.conn != nil && !c.conn.IsClosed() {
+		return c.conn, nil
+	}
+
+	conn, err := amqp.Dial(c.config.URL)
 	if err != nil {
 		return nil, fmt.Errorf("连接 RabbitMQ 失败: %w", err)
 	}
-
-	return &Client{
-		config: config,
-		conn:   conn,
-	}, nil
+	c.conn = conn
+	return conn, nil
 }
+
 func (c *Client) Close() error {
-	if c == nil || c.conn == nil {
+	if c == nil {
 		return nil
 	}
 
-	return c.conn.Close()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.conn == nil {
+		return nil
+	}
+	err := c.conn.Close()
+	c.conn = nil
+	return err
 }
 
+// IsClosed 表示当前没有可用连接；之后的 OpenChannel 会尝试重新拨号，
+// 所以返回 true 不代表客户端已经废弃。
 func (c *Client) IsClosed() bool {
-	return c == nil || c.conn == nil || c.conn.IsClosed()
+	if c == nil {
+		return true
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.conn == nil || c.conn.IsClosed()
 }
+
 func (c *Client) OpenChannel() (*amqp.Channel, error) {
-	if c == nil || c.conn == nil {
-		return nil, fmt.Errorf("RabbitMQ 客户端未初始化")
+	conn, err := c.connection()
+	if err != nil {
+		return nil, err
 	}
-	if c.conn.IsClosed() {
-		return nil, fmt.Errorf("RabbitMQ 连接已经关闭")
-	}
-	channel, err := c.conn.Channel()
+
+	channel, err := conn.Channel()
 	if err != nil {
 		return nil, fmt.Errorf("创建 RabbitMQ Channel 失败: %w", err)
 	}
