@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"feed-system-learning/internal/dbtest"
+
 	"feed-system-learning/internal/auth"
 
 	"github.com/redis/go-redis/v9"
@@ -38,9 +40,7 @@ func sessionCacheFixture(t *testing.T) (*AccountRepository, Account) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := database.AutoMigrate(&Account{}); err != nil {
-		t.Fatal(err)
-	}
+	dbtest.Migrate(t, database, &Account{})
 	redisDB := 15
 	if value := os.Getenv("FEED_TEST_REDIS_DB"); value != "" {
 		redisDB, err = strconv.Atoi(value)

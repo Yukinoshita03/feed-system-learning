@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"feed-system-learning/internal/dbtest"
+
 	"feed-system-learning/internal/account"
 	"feed-system-learning/internal/notification"
 	"feed-system-learning/internal/video"
@@ -35,9 +37,7 @@ func feedFixture(t *testing.T) (*FeedService, *gorm.DB, []account.Account) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := database.AutoMigrate(&account.Account{}, &video.Video{}, &video.Like{}, &video.Comment{}, &video.Favorite{}, &notification.Notification{}); err != nil {
-		t.Fatal(err)
-	}
+	dbtest.Migrate(t, database, &account.Account{}, &video.Video{}, &video.Like{}, &video.Comment{}, &video.Favorite{}, &notification.Notification{})
 	tx := database.Begin()
 	if tx.Error != nil {
 		t.Fatal(tx.Error)

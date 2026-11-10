@@ -5,6 +5,7 @@ import (
 	"errors"
 	"feed-system-learning/internal/account"
 	feeddb "feed-system-learning/internal/db"
+	"feed-system-learning/internal/dbtest"
 	"feed-system-learning/internal/notification"
 	"feed-system-learning/internal/social"
 	"feed-system-learning/internal/video"
@@ -40,9 +41,7 @@ func newCRUDFixture(t *testing.T) *crudFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := feeddb.AutoMigrate(database); err != nil {
-		t.Fatal(err)
-	}
+	dbtest.MigrateFunc(t, func() error { return feeddb.AutoMigrate(database) })
 	f := &crudFixture{db: database, videos: video.NewVideoRepository(database, nil)}
 	for i := 0; i < 2; i++ {
 		f.users = append(f.users, account.Account{Username: fmt.Sprintf("crud_%d_%d", time.Now().UnixNano(), i), Password: "test-hash"})

@@ -13,6 +13,7 @@ import (
 
 	"feed-system-learning/internal/account"
 	"feed-system-learning/internal/cache"
+	"feed-system-learning/internal/dbtest"
 	"feed-system-learning/internal/notification"
 
 	"github.com/redis/go-redis/v9"
@@ -45,9 +46,7 @@ func newLikeFixture(t *testing.T) *likeFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := database.AutoMigrate(&account.Account{}, &Video{}, &Like{}, &Comment{}, &Favorite{}, &notification.Notification{}, &notification.OutboxMessage{}); err != nil {
-		t.Fatal(err)
-	}
+	dbtest.Migrate(t, database, &account.Account{}, &Video{}, &Like{}, &Comment{}, &Favorite{}, &notification.Notification{}, &notification.OutboxMessage{})
 	f := &likeFixture{db: database}
 	var dataCache *cache.Client
 	if addr, number := os.Getenv("FEED_TEST_REDIS_ADDR"), os.Getenv("FEED_TEST_REDIS_DB"); addr != "" && number != "" {
