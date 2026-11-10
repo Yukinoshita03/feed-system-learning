@@ -83,6 +83,12 @@ func (c *Consumer) HandleFollow(ctx context.Context, delivery amqp.Delivery) err
 
 // 消费
 func (c *Consumer) Run(ctx context.Context, consumerTag string) error {
+	// 重连后 broker 可能已经没有队列（重启且未保留数据），而声明是幂等的，
+	// 所以每次启动都先确保 exchange/queue/binding 存在。
+	if err := c.client.SetupTopology(); err != nil {
+		return err
+	}
+
 	channel, err := c.client.OpenChannel()
 	if err != nil {
 		return err

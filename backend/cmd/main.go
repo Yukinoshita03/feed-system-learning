@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+
 	"feed-system-learning/internal/auth"
 	"feed-system-learning/internal/cache"
 	"feed-system-learning/internal/db"
@@ -96,11 +98,7 @@ func main() {
 
 	notificationConsumer := notification.NewConsumer(notificationRepo, mqClient)
 	for i := 0; i < 10; i++ {
-		go func() {
-			if err := notificationConsumer.Run(workerCtx, ""); err != nil {
-				log.Printf("通知消费者退出：%v", err)
-			}
-		}()
+		go notificationConsumer.RunForever(workerCtx, fmt.Sprintf("worker-%d", i))
 	}
 
 	// 播放上报不与视频删除抢锁，删除瞬间可能插入一条孤儿明细；
