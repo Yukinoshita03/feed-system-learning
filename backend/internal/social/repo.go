@@ -2,9 +2,12 @@ package social
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"feed-system-learning/internal/account"
 	"feed-system-learning/internal/notification"
+	"fmt"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -34,8 +37,23 @@ func (r *Repository) SetFollowing(ctx context.Context, actorID, targetID uint, a
 			if err := tx.Create(&existing).Error; err != nil {
 				return err
 			}
-			if err := notification.Record(tx, targetID, actorID, notification.Follow, existing.ID, 0, "关注了你"); err != nil {
-				return err
+			if targetID != actorID {
+				payload, err := json.Marshal(notification.FollowCreatedEvent{
+					FollowID:   existing.ID,
+					ActorID:    actorID,
+					ReceiverID: targetID,
+				})
+				if err != nil {
+					return err
+				}
+				outbox := notification.OutboxMessage{
+					EventKey:  fmt.Sprintf("follow:%d", existing.ID),
+					EventType: "follow.created",
+					Payload:   payload,
+				}
+				if err := tx.Create(&outbox).Error; err != nil {
+					return err
+				}
 			}
 		} else if !active && exists {
 			if err := tx.Delete(&existing).Error; err != nil {

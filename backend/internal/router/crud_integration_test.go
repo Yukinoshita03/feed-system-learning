@@ -9,12 +9,13 @@ import (
 	"feed-system-learning/internal/social"
 	"feed-system-learning/internal/video"
 	"fmt"
-	"gorm.io/driver/mysql"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 	"os"
 	"testing"
 	"time"
+
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 type crudFixture struct {
@@ -136,12 +137,10 @@ func TestCRUDNotificationWriteFailureRollsBackAllBusinessKinds(t *testing.T) {
 			f := newCRUDFixture(t)
 			errInjected := errors.New("injected notification failure")
 			name := "crud:fail-notification"
-			failedTable := "notifications"
-			if kind == "like" {
-				failedTable = "notification_outbox"
-			}
+			// 四类互动都在业务事务里写 notification_outbox，通知由 Consumer 异步落库；
+			// 所以 outbox 写入失败必须让业务一起回滚。
 			if err := f.db.Callback().Create().Before("gorm:create").Register(name, func(tx *gorm.DB) {
-				if tx.Statement.Table == failedTable {
+				if tx.Statement.Table == "notification_outbox" {
 					tx.AddError(errInjected)
 				}
 			}); err != nil {
@@ -163,7 +162,7 @@ func TestCRUDNotificationWriteFailureRollsBackAllBusinessKinds(t *testing.T) {
 			if !errors.Is(err, errInjected) {
 				t.Fatalf("got %v, want injected failure", err)
 			}
-			if kind == "like" && f.count(t, &notification.OutboxMessage{}, "event_type = ?", "like.created") != 0 {
+			if f.count(t, &notification.OutboxMessage{}, "JSON_EXTRACT(payload, '$.receiver_id') = ?", f.users[0].ID) != 0 {
 				t.Fatal("outbox event survived rollback")
 			}
 			for _, entity := range []any{&video.Like{}, &video.Favorite{}, &video.Comment{}} {

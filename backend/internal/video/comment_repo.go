@@ -2,9 +2,12 @@ package video
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"feed-system-learning/internal/cache"
 	"feed-system-learning/internal/notification"
+	"fmt"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -33,8 +36,24 @@ func (r *CommentRepository) Create(ctx context.Context, item *Comment) (int64, e
 			UpdateColumn("comments_count", gorm.Expr("comments_count + 1")).Error; err != nil {
 			return err
 		}
-		if err := notification.Record(tx, current.AuthorID, item.AuthorID, notification.Comment, item.ID, item.VideoID, item.Content); err != nil {
-			return err
+		if current.AuthorID != item.AuthorID {
+			payload, err := json.Marshal(notification.CommentCreatedEvent{
+				CommentID:  item.ID,
+				VideoID:    item.VideoID,
+				ActorID:    item.AuthorID,
+				ReceiverID: current.AuthorID,
+			})
+			if err != nil {
+				return err
+			}
+			outbox := notification.OutboxMessage{
+				EventKey:  fmt.Sprintf("comment:%d", item.ID),
+				EventType: "comment.created",
+				Payload:   payload,
+			}
+			if err := tx.Create(&outbox).Error; err != nil {
+				return err
+			}
 		}
 		count = current.CommentsCount + 1
 		return nil

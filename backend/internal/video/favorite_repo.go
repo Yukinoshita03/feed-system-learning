@@ -2,9 +2,13 @@ package video
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+
 	"feed-system-learning/internal/cache"
 	"feed-system-learning/internal/notification"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -40,8 +44,25 @@ func (r *FavoriteRepository) SetFavorited(ctx context.Context, videoID, accountI
 			if err := tx.Model(&Video{}).Where("id = ?", videoID).UpdateColumn("favorites_count", gorm.Expr("favorites_count + 1")).Error; err != nil {
 				return err
 			}
-			if err := notification.Record(tx, current.AuthorID, accountID, notification.Favorite, existing.ID, videoID, "收藏了你的视频"); err != nil {
-				return err
+			// 只写 outbox，通知由 Consumer 异步落库；自己收藏自己的视频不通知。
+			if current.AuthorID != accountID {
+				payload, err := json.Marshal(notification.FavoriteCreatedEvent{
+					FavoriteID: existing.ID,
+					VideoID:    videoID,
+					ActorID:    accountID,
+					ReceiverID: current.AuthorID,
+				})
+				if err != nil {
+					return err
+				}
+				outbox := notification.OutboxMessage{
+					EventKey:  fmt.Sprintf("favorite:%d", existing.ID),
+					EventType: "favorite.created",
+					Payload:   payload,
+				}
+				if err := tx.Create(&outbox).Error; err != nil {
+					return err
+				}
 			}
 			current.FavoritesCount++
 		} else if !active && exists {

@@ -3,23 +3,11 @@ package notification
 import (
 	"context"
 	"fmt"
+	"time"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"time"
 )
-
-// Record 由业务 Repo 在现有事务内调用；通知失败时业务变更也会回滚。
-// 重复的点赞、收藏、关注不会走到这里；取消后再次操作会产生新事件。
-func Record(tx *gorm.DB, receiverID, actorID uint, kind string, sourceID, videoID uint, content string) error {
-	if receiverID == actorID {
-		return nil
-	}
-	item := Notification{
-		ReceiverID: receiverID, ActorID: actorID, Kind: kind, VideoID: videoID,
-		Content: content, EventKey: fmt.Sprintf("%s:%d", kind, sourceID),
-	}
-	return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&item).Error
-}
 
 type Repository struct{ db *gorm.DB }
 
@@ -146,6 +134,73 @@ func (r *Repository) CreateLikeNotification(ctx context.Context, event LikeCreat
 		VideoID:    event.VideoID,
 		Content:    "赞了你的视频",
 		EventKey:   fmt.Sprintf("%s:%d", Like, event.LikeID),
+	}
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "event_key"}},
+			DoNothing: true,
+		}).
+		Create(&item).Error
+}
+func (r *Repository) CreateCommentNotification(ctx context.Context, event CommentCreatedEvent) error {
+	if event.CommentID == 0 || event.VideoID == 0 ||
+		event.ActorID == 0 || event.ReceiverID == 0 {
+		return fmt.Errorf("评论通知事件字段无效")
+	}
+	if event.ActorID == event.ReceiverID {
+		return nil
+	}
+	item := Notification{
+		ReceiverID: event.ReceiverID,
+		ActorID:    event.ActorID,
+		Kind:       Comment,
+		VideoID:    event.VideoID,
+		Content:    "评论了你的视频",
+		EventKey:   fmt.Sprintf("%s:%d", Comment, event.CommentID),
+	}
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "event_key"}},
+			DoNothing: true,
+		}).
+		Create(&item).Error
+}
+func (r *Repository) CreateFavoriteNotification(ctx context.Context, event FavoriteCreatedEvent) error {
+	if event.FavoriteID == 0 || event.VideoID == 0 ||
+		event.ActorID == 0 || event.ReceiverID == 0 {
+		return fmt.Errorf("收藏通知事件字段无效")
+	}
+	if event.ActorID == event.ReceiverID {
+		return nil
+	}
+	item := Notification{
+		ReceiverID: event.ReceiverID,
+		ActorID:    event.ActorID,
+		Kind:       Favorite,
+		VideoID:    event.VideoID,
+		Content:    "收藏了你的视频",
+		EventKey:   fmt.Sprintf("%s:%d", Favorite, event.FavoriteID),
+	}
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "event_key"}},
+			DoNothing: true,
+		}).
+		Create(&item).Error
+}
+func (r *Repository) CreateFollowNotification(ctx context.Context, event FollowCreatedEvent) error {
+	if event.FollowID == 0 || event.ActorID == 0 || event.ReceiverID == 0 {
+		return fmt.Errorf("关注通知事件字段无效")
+	}
+	if event.ActorID == event.ReceiverID {
+		return nil
+	}
+	item := Notification{
+		ReceiverID: event.ReceiverID,
+		ActorID:    event.ActorID,
+		Kind:       Follow,
+		Content:    "关注了你",
+		EventKey:   fmt.Sprintf("%s:%d", Follow, event.FollowID),
 	}
 	return r.db.WithContext(ctx).
 		Clauses(clause.OnConflict{
