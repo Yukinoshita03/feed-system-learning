@@ -15,6 +15,11 @@ type Config struct {
 	BindingKey    string
 	ConsumerTag   string
 	PrefetchCount int
+
+	// DeadLetterExchange 接收被拒绝的消息；DeadLetterQueue 保存它们等人处理。
+	// 死信不自动消费，否则问题会被"绕过"而不是被发现。
+	DeadLetterExchange string
+	DeadLetterQueue    string
 }
 
 func LoadConfig() (Config, error) {
@@ -27,6 +32,9 @@ func LoadConfig() (Config, error) {
 		BindingKey:    "notification.#",
 		ConsumerTag:   "feed-notification-worker",
 		PrefetchCount: 10,
+
+		DeadLetterExchange: "feed.dlx",
+		DeadLetterQueue:    "feed.notification.dlq",
 	}
 
 	if value := strings.TrimSpace(os.Getenv("RABBITMQ_URL")); value != "" {
@@ -44,6 +52,12 @@ func LoadConfig() (Config, error) {
 	if value := strings.TrimSpace(os.Getenv("RABBITMQ_CONSUMER_TAG")); value != "" {
 		config.ConsumerTag = value
 	}
+	if value := strings.TrimSpace(os.Getenv("RABBITMQ_DLX_EXCHANGE")); value != "" {
+		config.DeadLetterExchange = value
+	}
+	if value := strings.TrimSpace(os.Getenv("RABBITMQ_DLQ")); value != "" {
+		config.DeadLetterQueue = value
+	}
 	if value := strings.TrimSpace(os.Getenv("RABBITMQ_PREFETCH")); value != "" {
 		prefetch, err := strconv.Atoi(value)
 		if err != nil || prefetch <= 0 {
@@ -54,6 +68,9 @@ func LoadConfig() (Config, error) {
 
 	if config.URL == "" {
 		return Config{}, fmt.Errorf("RabbitMQ URL 不能为空")
+	}
+	if config.DeadLetterExchange == "" || config.DeadLetterQueue == "" {
+		return Config{}, fmt.Errorf("死信 Exchange 和死信队列名称不能为空")
 	}
 
 	return config, nil

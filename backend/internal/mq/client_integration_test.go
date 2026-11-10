@@ -178,3 +178,91 @@ func TestRabbitMQConcurrentReconnect(t *testing.T) {
 		}
 	}
 }
+
+// 验证 x-dead-letter-exchange 真的生效：被 Nack(requeue=false) 的消息
+// 应该出现在死信队列里，而不是凭空消失。
+func TestRabbitMQRejectedMessageReachesDeadLetterQueue(t *testing.T) {
+	if os.Getenv("RABBITMQ_SMOKE") != "1" {
+		t.Skip("设置 RABBITMQ_SMOKE=1 才运行 RabbitMQ 测试")
+	}
+	config, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	config.Exchange = "feed.test.ex." + suffix
+	config.Queue = "feed.test.queue." + suffix
+	config.BindingKey = "notification.#"
+	config.DeadLetterExchange = "feed.test.dlx." + suffix
+	config.DeadLetterQueue = "feed.test.dlq." + suffix
+
+	client, err := NewClient(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if err := client.SetupTopology(); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	channel, err := client.OpenChannel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_, _ = channel.QueueDelete(config.Queue, false, false, false)
+		_, _ = channel.QueueDelete(config.DeadLetterQueue, false, false, false)
+		_ = channel.ExchangeDelete(config.Exchange, false, false)
+		_ = channel.ExchangeDelete(config.DeadLetterExchange, false, false)
+		_ = channel.Close()
+	}()
+
+	// 发一条消息，然后用 Nack(requeue=false) 拒绝它。
+	if err := channel.Confirm(false); err != nil {
+		t.Fatal(err)
+	}
+	if err := channel.PublishWithContext(ctx, config.Exchange, "notification.like.created", false, false,
+		amqp.Publishing{ContentType: "application/json", Body: []byte("poison")}); err != nil {
+		t.Fatal(err)
+	}
+
+	consumeChannel, err := client.OpenChannel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer consumeChannel.Close()
+	deliveries, err := client.Consume(ctx, consumeChannel, "dlq-test-"+suffix)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case delivery := <-deliveries:
+		if err := delivery.Nack(false, false); err != nil {
+			t.Fatalf("Nack 失败: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("没有收到消息")
+	}
+
+	// 死信路由是异步的，轮询等待它落到 DLQ。
+	inspect, err := client.OpenChannel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inspect.Close()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		queue, err := inspect.QueueInspect(config.DeadLetterQueue)
+		if err == nil && queue.Messages == 1 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("消息没有进入死信队列，DLQ 当前深度=%d err=%v", queue.Messages, err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}

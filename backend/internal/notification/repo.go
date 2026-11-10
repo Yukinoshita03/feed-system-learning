@@ -122,7 +122,7 @@ func (r *Repository) MarkOutboxPublished(ctx context.Context, id uint, claimToke
 func (r *Repository) CreateLikeNotification(ctx context.Context, event LikeCreatedEvent) error {
 	if event.LikeID == 0 || event.VideoID == 0 ||
 		event.ActorID == 0 || event.ReceiverID == 0 {
-		return fmt.Errorf("点赞通知事件字段无效")
+		return fmt.Errorf("%w：点赞通知事件字段无效", ErrPermanent)
 	}
 	if event.ActorID == event.ReceiverID {
 		return nil
@@ -145,7 +145,7 @@ func (r *Repository) CreateLikeNotification(ctx context.Context, event LikeCreat
 func (r *Repository) CreateCommentNotification(ctx context.Context, event CommentCreatedEvent) error {
 	if event.CommentID == 0 || event.VideoID == 0 ||
 		event.ActorID == 0 || event.ReceiverID == 0 {
-		return fmt.Errorf("评论通知事件字段无效")
+		return fmt.Errorf("%w：评论通知事件字段无效", ErrPermanent)
 	}
 	if event.ActorID == event.ReceiverID {
 		return nil
@@ -168,7 +168,7 @@ func (r *Repository) CreateCommentNotification(ctx context.Context, event Commen
 func (r *Repository) CreateFavoriteNotification(ctx context.Context, event FavoriteCreatedEvent) error {
 	if event.FavoriteID == 0 || event.VideoID == 0 ||
 		event.ActorID == 0 || event.ReceiverID == 0 {
-		return fmt.Errorf("收藏通知事件字段无效")
+		return fmt.Errorf("%w：收藏通知事件字段无效", ErrPermanent)
 	}
 	if event.ActorID == event.ReceiverID {
 		return nil
@@ -190,7 +190,7 @@ func (r *Repository) CreateFavoriteNotification(ctx context.Context, event Favor
 }
 func (r *Repository) CreateFollowNotification(ctx context.Context, event FollowCreatedEvent) error {
 	if event.FollowID == 0 || event.ActorID == 0 || event.ReceiverID == 0 {
-		return fmt.Errorf("关注通知事件字段无效")
+		return fmt.Errorf("%w：关注通知事件字段无效", ErrPermanent)
 	}
 	if event.ActorID == event.ReceiverID {
 		return nil

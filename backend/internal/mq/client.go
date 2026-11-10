@@ -109,19 +109,23 @@ func (c *Client) DeclareExchange(channel *amqp.Channel) error {
 		return fmt.Errorf("Exchange 类型不能为空")
 	}
 
+	return declareExchange(channel, c.config.Exchange, c.config.ExchangeType)
+}
+
+// declareExchange 声明一个 durable exchange；业务 exchange 和死信 exchange 共用。
+func declareExchange(channel *amqp.Channel, name, kind string) error {
 	err := channel.ExchangeDeclare(
-		c.config.Exchange,     // 名称：feed.events
-		c.config.ExchangeType, // 类型：topic
-		true,                  // durable：RabbitMQ 重启后保留
-		false,                 // autoDelete：没有消费者时不自动删除
-		false,                 // internal：允许生产者直接发布
-		false,                 // noWait：等待 RabbitMQ 确认声明结果
-		nil,                   // 额外参数
+		name,
+		kind,
+		true,  // durable：RabbitMQ 重启后保留
+		false, // autoDelete：没有消费者时不自动删除
+		false, // internal：允许生产者直接发布
+		false, // noWait：等待 RabbitMQ 确认声明结果
+		nil,   // 额外参数
 	)
 	if err != nil {
-		return fmt.Errorf("声明 Exchange 失败: %w", err)
+		return fmt.Errorf("声明 Exchange %s 失败: %w", name, err)
 	}
-
 	return nil
 }
 func (c *Client) DeclareQueue(channel *amqp.Channel) (amqp.Queue, error) {
@@ -139,7 +143,14 @@ func (c *Client) DeclareQueue(channel *amqp.Channel) (amqp.Queue, error) {
 		false,          // autoDelete：消费者断开后不自动删除
 		false,          // exclusive：不归某个连接独占
 		false,          // noWait：等待 RabbitMQ 确认
-		nil,            // 额外参数
+		amqp.Table{
+			// 被 Nack(requeue=false) 的消息自动转到这里，不会凭空消失。
+			"x-dead-letter-exchange": c.config.DeadLetterExchange,
+			// 死信进入 DLX 时默认沿用原 routing key（notification.like.created），
+			// 而 DLX 是 direct、绑定的是 dead，两者不匹配会让消息被 exchange
+			// 直接丢弃——又是一次静默丢失。这里强制改写，保证能路由到 DLQ。
+			"x-dead-letter-routing-key": deadLetterRoutingKey,
+		},
 	)
 	if err != nil {
 		return amqp.Queue{}, fmt.Errorf("声明 Queue 失败: %w", err)
@@ -176,6 +187,50 @@ func (c *Client) BindQueue(channel *amqp.Channel) error {
 	return nil
 }
 
+// DeclareDeadLetterTopology 声明死信 exchange、死信队列，并把两者绑定。
+//
+// 死信队列自己不带 x-dead-letter-exchange，否则"死信的死信"会绕圈；
+// 它也不挂消费者：死信要被人看见并处理，自动消费只会把问题藏起来。
+func (c *Client) DeclareDeadLetterTopology(channel *amqp.Channel) error {
+	if c == nil || channel == nil {
+		return fmt.Errorf("RabbitMQ 客户端或 Channel 未初始化")
+	}
+	if c.config.DeadLetterExchange == "" || c.config.DeadLetterQueue == "" {
+		return fmt.Errorf("死信 Exchange 和死信队列名称不能为空")
+	}
+
+	// 用 direct：所有死信共用一个 routing key，规则简单。
+	if err := declareExchange(channel, c.config.DeadLetterExchange, "direct"); err != nil {
+		return err
+	}
+
+	if _, err := channel.QueueDeclare(
+		c.config.DeadLetterQueue,
+		true,  // durable
+		false, // autoDelete
+		false, // exclusive
+		false, // noWait
+		nil,   // 不挂死信，避免死信再死信
+	); err != nil {
+		return fmt.Errorf("声明死信队列失败: %w", err)
+	}
+
+	if err := channel.QueueBind(
+		c.config.DeadLetterQueue,
+		deadLetterRoutingKey,
+		c.config.DeadLetterExchange,
+		false,
+		nil,
+	); err != nil {
+		return fmt.Errorf("绑定死信队列失败: %w", err)
+	}
+
+	return nil
+}
+
+// deadLetterRoutingKey 是死信进入 DLX 时使用的固定 routing key。
+const deadLetterRoutingKey = "dead"
+
 func (c *Client) SetupTopology() error {
 	channel, err := c.OpenChannel()
 	if err != nil {
@@ -183,6 +238,11 @@ func (c *Client) SetupTopology() error {
 	}
 	defer channel.Close()
 
+	// 死信 exchange 必须先于业务队列存在：队列声明时引用一个不存在的
+	// exchange，RabbitMQ 会返回 NOT_FOUND。
+	if err := c.DeclareDeadLetterTopology(channel); err != nil {
+		return err
+	}
 	if err := c.DeclareExchange(channel); err != nil {
 		return err
 	}
