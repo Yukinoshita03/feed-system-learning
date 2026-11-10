@@ -13,7 +13,7 @@ export function useVideoFeed() {
   const recommend = reactive({
     items: [] as FeedVideoItem[],
     loading: false, error: '',
-    hasMore: false, nextTime: 0,
+    hasMore: false, nextTime: 0, nextId: 0,
   })
 
   const hot = reactive({
@@ -41,9 +41,14 @@ export function useVideoFeed() {
     recommend.loading = true
     recommend.error = ''
     try {
-      const res = await feedApi.listLatest({ limit: 10, latest_time: reset ? 0 : recommend.nextTime })
+      const res = await feedApi.listLatest({
+        limit: 10,
+        latest_time: reset ? 0 : recommend.nextTime,
+        latest_id: reset ? 0 : recommend.nextId,
+      })
       recommend.hasMore = res.has_more
       recommend.nextTime = res.next_time
+      recommend.nextId = res.next_id
       recommend.items = reset ? res.video_list : recommend.items.concat(res.video_list)
     } catch (e) {
       recommend.error = e instanceof ApiError ? e.message : String(e)

@@ -7,6 +7,7 @@ import UserAvatar from '../components/UserAvatar.vue'
 import { ApiError } from '../api/client'
 import * as commentApi from '../api/comment'
 import * as likeApi from '../api/like'
+import * as favoriteApi from '../api/favorite'
 import type { Comment, Video } from '../api/types'
 import * as videoApi from '../api/video'
 import { useAuthStore } from '../stores/auth'
@@ -26,6 +27,7 @@ const state = reactive({
   error: '',
   video: null as Video | null,
   isLiked: null as boolean | null,
+  isFavorited: false,
   busy: false,
 })
 
@@ -37,6 +39,8 @@ const drawer = reactive({
   loading: false,
   error: '',
   comments: [] as Comment[],
+  nextId: 0,
+  hasMore: false,
   content: '',
 })
 
@@ -62,16 +66,20 @@ async function loadVideo() {
 }
 
 async function loadIsLiked() {
-  if (!auth.isLoggedIn) {
-    state.isLiked = null
-    return
-  }
+  state.busy = true
   try {
-    const res = await likeApi.isLiked(id.value)
-    state.isLiked = res.is_liked
+    if (!auth.isLoggedIn) {
+      state.isLiked = null
+      state.isFavorited = false
+      return
+    }
+    const [liked, favorite] = await Promise.all([likeApi.isLiked(id.value), favoriteApi.isFavorited(id.value)])
+    state.isLiked = liked.is_liked
+    state.isFavorited = favorite.is_favorited
   } catch {
     state.isLiked = null
-  }
+    state.isFavorited = false
+  } finally { state.busy = false }
 }
 
 async function play() {
@@ -104,21 +112,28 @@ async function toggleLike() {
 
   state.busy = true
   try {
-    if (state.isLiked) {
-      await likeApi.unlike(id.value)
-      state.isLiked = false
-      state.video.likes_count = Math.max(0, state.video.likes_count - 1)
-    } else {
-      await likeApi.like(id.value)
-      state.isLiked = true
-      state.video.likes_count += 1
-    }
+    const result = state.isLiked ? await likeApi.unlike(id.value) : await likeApi.like(id.value)
+    state.isLiked = result.is_liked
+    state.video.likes_count = result.likes_count
   } catch (e) {
     const msg = e instanceof ApiError ? e.message : String(e)
     toast.error(msg)
   } finally {
     state.busy = false
   }
+}
+
+async function toggleFavorite() {
+  if (!state.video) return
+  if (!auth.isLoggedIn) return needLogin()
+  if (state.busy) return
+  state.busy = true
+  try {
+    const result = state.isFavorited ? await favoriteApi.unfavorite(id.value) : await favoriteApi.favorite(id.value)
+    state.isFavorited = result.is_favorited
+    state.video.favorites_count = result.favorites_count
+  } catch (e) { toast.error(e instanceof ApiError ? e.message : String(e)) }
+  finally { state.busy = false }
 }
 
 async function toggleFollow() {
@@ -162,12 +177,15 @@ function closeDrawer() {
   drawer.error = ''
 }
 
-async function loadComments() {
+async function loadComments(append = false) {
   if (!state.video) return
   drawer.loading = true
   drawer.error = ''
   try {
-    drawer.comments = await commentApi.listAll(state.video.id)
+    const page = await commentApi.listPage(state.video.id, append ? drawer.nextId : 0)
+    drawer.comments = append ? [...drawer.comments, ...page.comments] : page.comments
+    drawer.nextId = page.next_id
+    drawer.hasMore = page.has_more
   } catch (e) {
     drawer.error = e instanceof ApiError ? e.message : String(e)
   } finally {
@@ -299,6 +317,11 @@ onMounted(async () => {
               <span class="count">{{ state.video.likes_count }}</span>
             </button>
 
+            <button class="act" type="button" :disabled="state.busy" :aria-label="state.isFavorited ? '取消收藏' : '收藏视频'" @click.stop="toggleFavorite">
+              <span class="icon" :class="{ liked: state.isFavorited }">★</span>
+              <span class="count">{{ state.video.favorites_count ?? 0 }}</span>
+            </button>
+
             <button class="act" type="button" @click.stop="openComments">
               <span class="icon">💬</span>
               <span class="count">评论</span>
@@ -354,12 +377,13 @@ onMounted(async () => {
                 </button>
               </div>
             </div>
+<button v-if="drawer.hasMore" class="chip" type="button" :disabled="drawer.loading" @click="loadComments(true)">加载更多评论</button>
           </div>
 
           <div class="drawer-foot">
-            <textarea v-model="drawer.content" placeholder="说点什么…" :disabled="drawer.loading" />
+            <textarea v-model="drawer.content" maxlength="1000" placeholder="说点什么…" :disabled="drawer.loading" />
             <div class="row" style="justify-content: space-between; margin-top: 8px">
-              <button class="chip" type="button" :disabled="drawer.loading" @click="loadComments">刷新</button>
+              <button class="chip" type="button" :disabled="drawer.loading" @click="loadComments()">刷新</button>
               <button class="chip primary" type="button" :disabled="drawer.loading || !drawer.content.trim()" @click="publishComment">
                 发送
               </button>

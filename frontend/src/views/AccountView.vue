@@ -7,6 +7,7 @@ import UserAvatar from '../components/UserAvatar.vue'
 import { ApiError } from '../api/client'
 import * as accountApi from '../api/account'
 import * as likeApi from '../api/like'
+import * as favoriteApi from '../api/favorite'
 import type { Video } from '../api/types'
 import * as videoApi from '../api/video'
 import { useAuthStore } from '../stores/auth'
@@ -32,7 +33,7 @@ const myVideos = reactive({
   items: [] as Video[],
 })
 
-type VideoTab = 'works' | 'likes'
+type VideoTab = 'works' | 'likes' | 'favorites'
 const videoTab = ref<VideoTab>('works')
 
 let myVideosReq = 0
@@ -61,6 +62,25 @@ async function loadMyVideos() {
     if (req === myVideosReq) myVideos.loading = false
   }
 }
+
+const favoriteVideos = reactive({ loading: false, error: '', items: [] as Video[], nextId: 0, hasMore: false })
+let favoritesRequest = 0
+async function loadFavorites(append = false) {
+  const request = ++favoritesRequest
+  if (!auth.isLoggedIn) return
+  favoriteVideos.loading = true
+  favoriteVideos.error = ''
+  try {
+    const page = await favoriteApi.listMyFavorites(append ? favoriteVideos.nextId : 0)
+    if (request !== favoritesRequest) return
+    favoriteVideos.items = append ? [...favoriteVideos.items, ...page.video_list] : page.video_list
+    favoriteVideos.nextId = page.next_id
+    favoriteVideos.hasMore = page.has_more
+  } catch (e) {
+    if (request === favoritesRequest) favoriteVideos.error = e instanceof ApiError ? e.message : String(e)
+  } finally { if (request === favoritesRequest) favoriteVideos.loading = false }
+}
+function openFavorites() { videoTab.value = 'favorites'; void loadFavorites() }
 
 const likedVideos = reactive({
   loading: false,
@@ -196,6 +216,8 @@ watch(
       likedVideos.items = []
       likedVideos.error = ''
 
+      favoritesRequest += 1
+      Object.assign(favoriteVideos, { loading: false, error: '', items: [], nextId: 0, hasMore: false })
       videoTab.value = 'works'
     }
   },
@@ -207,6 +229,7 @@ watch(
     if (auth.isLoggedIn && id) {
       void loadMyVideos()
       if (videoTab.value === 'likes') void loadLikedVideos()
+      if (videoTab.value === 'favorites') void loadFavorites()
     }
   },
   { immediate: true },
@@ -270,13 +293,16 @@ watch(
             <div class="metric-num">{{ likedVideos.loading ? '…' : likedVideos.loaded ? likedVideos.items.length : '—' }}</div>
             <div class="metric-label">点赞</div>
           </button>
+          <button class="metric" type="button" :class="{ active: videoTab === 'favorites' }" @click="openFavorites">
+            <div class="metric-num">★</div><div class="metric-label">收藏</div>
+          </button>
           <div v-if="socialErrorHint" class="subtle" style="margin-left: 8px">社交信息加载失败：{{ socialErrorHint }}</div>
         </div>
       </div>
 
       <div class="card" style="margin-top: 14px">
         <div class="row" style="justify-content: space-between">
-          <p class="title" style="margin: 0">{{ videoTab === 'works' ? '作品' : '点赞视频' }}</p>
+          <p class="title" style="margin: 0">{{ videoTab === 'works' ? '作品' : videoTab === 'likes' ? '点赞视频' : '收藏视频' }}</p>
           <div class="subtle">点击封面进入播放页</div>
         </div>
 
@@ -295,7 +321,7 @@ watch(
             </button>
           </div>
         </template>
-        <template v-else>
+        <template v-else-if="videoTab === 'likes'">
           <div v-if="likedVideos.loading" class="hint" style="margin-top: 12px">加载中…</div>
           <div v-else-if="likedVideos.error" class="hint bad" style="margin-top: 12px">{{ likedVideos.error }}</div>
           <div v-else-if="likedVideos.items.length === 0" class="hint" style="margin-top: 12px">暂无点赞视频</div>
@@ -309,6 +335,18 @@ watch(
               </div>
             </button>
           </div>
+        </template>
+        <template v-else>
+          <div v-if="favoriteVideos.error" class="hint bad">{{ favoriteVideos.error }}</div>
+          <div v-if="!favoriteVideos.loading && favoriteVideos.items.length === 0" class="hint">暂无收藏视频</div>
+          <div class="video-grid" style="margin-top: 12px">
+            <button v-for="v in favoriteVideos.items" :key="v.id" class="video-card" type="button" @click="goVideo(v.id)">
+              <img class="video-cover" :src="v.cover_url" :alt="v.title" loading="lazy" />
+              <div class="video-meta"><div class="video-title">{{ v.title }}</div></div>
+            </button>
+          </div>
+          <button v-if="favoriteVideos.hasMore" class="ghost" type="button" :disabled="favoriteVideos.loading" @click="loadFavorites(true)">加载更多收藏</button>
+          <div v-if="favoriteVideos.loading" class="hint">加载中…</div>
         </template>
       </div>
     </template>

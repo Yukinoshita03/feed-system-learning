@@ -19,13 +19,14 @@ type ListState = {
   has_more: boolean
 }
 
-const latest = reactive<ListState & { limit: number; next_time: number }>({
+const latest = reactive<ListState & { limit: number; next_time: number; next_id: number }>({
   loading: false,
   error: '',
   items: [],
   has_more: false,
   limit: 10,
   next_time: 0,
+  next_id: 0,
 })
 
 const likesCount = reactive<ListState & { limit: number; next_likes_count_before?: number; next_id_before?: number }>({
@@ -76,9 +77,11 @@ async function loadLatest(reset: boolean) {
   latest.error = ''
   try {
     const latest_time = reset ? 0 : latest.next_time
-    const res = await feedApi.listLatest({ limit: latest.limit, latest_time })
+    const latest_id = reset ? 0 : latest.next_id
+    const res = await feedApi.listLatest({ limit: latest.limit, latest_time, latest_id })
     latest.has_more = res.has_more
     latest.next_time = res.next_time
+    latest.next_id = res.next_id
     latest.items = reset ? res.video_list : latest.items.concat(res.video_list)
   } catch (e) {
     latest.error = e instanceof ApiError ? e.message : String(e)
@@ -165,7 +168,7 @@ watch(
           <div class="row" style="justify-content: space-between">
             <div>
               <p class="title">最新流（listLatest）</p>
-              <div class="subtle">limit：{{ latest.limit }} · next_time：{{ latest.next_time }} · has_more：{{ latest.has_more }}</div>
+              <div class="subtle">limit：{{ latest.limit }} · next=(time={{ latest.next_time }}, id={{ latest.next_id }}) · has_more：{{ latest.has_more }}</div>
             </div>
             <div class="row">
               <label class="subtle" style="margin: 0">limit</label>
