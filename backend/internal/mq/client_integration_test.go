@@ -54,7 +54,7 @@ func TestRabbitMQSmoke(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	deliveries, err := client.Consume(ctx, channel)
+	deliveries, err := client.Consume(ctx, channel, config.ConsumerTag)
 	if err != nil {
 		t.Fatal(err)
 	}

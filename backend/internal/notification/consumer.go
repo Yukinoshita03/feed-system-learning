@@ -34,14 +34,14 @@ func (c *Consumer) HandleLike(ctx context.Context, delivery amqp.Delivery) error
 }
 
 // 消费
-func (c *Consumer) Run(ctx context.Context) error {
+func (c *Consumer) Run(ctx context.Context, consumerTag string) error {
 	channel, err := c.client.OpenChannel()
 	if err != nil {
 		return err
 	}
 	defer channel.Close()
 
-	deliveries, err := c.client.Consume(ctx, channel)
+	deliveries, err := c.client.Consume(ctx, channel, consumerTag)
 	if err != nil {
 		return err
 	}

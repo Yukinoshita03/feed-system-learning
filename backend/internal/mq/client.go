@@ -226,6 +226,7 @@ func (c *Client) Publish(
 func (c *Client) Consume(
 	ctx context.Context,
 	channel *amqp.Channel,
+	consumerTag string,
 ) (<-chan amqp.Delivery, error) {
 	if c == nil || channel == nil {
 		return nil, fmt.Errorf("RabbitMQ 客户端或 Channel 未初始化")
@@ -253,13 +254,13 @@ func (c *Client) Consume(
 
 	deliveries, err := channel.ConsumeWithContext(
 		ctx,
-		c.config.Queue,       // Queue
-		c.config.ConsumerTag, // ConsumerTag
-		false,                // autoAck：关闭自动 ACK
-		false,                // exclusive：不独占队列
-		false,                // noLocal
-		false,                // noWait
-		nil,                  // 额外参数
+		c.config.Queue, // Queue
+		consumerTag,    // ConsumerTag
+		false,          // autoAck：关闭自动 ACK
+		false,          // exclusive：不独占队列
+		false,          // noLocal
+		false,          // noWait
+		nil,            // 额外参数
 	)
 	if err != nil {
 		return nil, fmt.Errorf("注册 RabbitMQ 消费者失败: %w", err)

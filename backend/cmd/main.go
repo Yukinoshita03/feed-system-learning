@@ -94,11 +94,13 @@ func main() {
 	defer stopWorkers()
 
 	notificationConsumer := notification.NewConsumer(notificationRepo, mqClient)
-	go func() {
-		if err := notificationConsumer.Run(workerCtx); err != nil {
-			log.Printf("通知消费者退出：%v", err)
-		}
-	}()
+	for i := 0; i < 10; i++ {
+		go func() {
+			if err := notificationConsumer.Run(workerCtx, ""); err != nil {
+				log.Printf("通知消费者退出：%v", err)
+			}
+		}()
+	}
 
 	notificationPublisher := notification.NewOutboxPublisher(notificationRepo, mqClient)
 	go func() {
