@@ -46,7 +46,7 @@ func newLikeFixture(t *testing.T) *likeFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	dbtest.Migrate(t, database, &account.Account{}, &Video{}, &Like{}, &Comment{}, &Favorite{}, &notification.Notification{}, &notification.OutboxMessage{})
+	dbtest.Migrate(t, database, &account.Account{}, &Video{}, &Like{}, &Comment{}, &Favorite{}, &VideoView{}, &notification.Notification{}, &notification.OutboxMessage{})
 	f := &likeFixture{db: database}
 	var dataCache *cache.Client
 	if addr, number := os.Getenv("FEED_TEST_REDIS_ADDR"), os.Getenv("FEED_TEST_REDIS_DB"); addr != "" && number != "" {

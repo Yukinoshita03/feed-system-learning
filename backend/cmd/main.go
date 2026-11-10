@@ -8,6 +8,7 @@ import (
 	"feed-system-learning/internal/mq"
 	"feed-system-learning/internal/notification"
 	"feed-system-learning/internal/router"
+	"feed-system-learning/internal/video"
 	"log"
 	"os"
 	"strconv"
@@ -101,6 +102,33 @@ func main() {
 			}
 		}()
 	}
+
+	// 播放上报不与视频删除抢锁，删除瞬间可能插入一条孤儿明细；
+	// 这里用低频扫描兜底收敛，每轮删一批避免长事务。
+	orphanViews := video.NewViewRepository(mydb, video.NewVideoRepository(mydb, dataCache))
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-workerCtx.Done():
+				return
+			case <-ticker.C:
+				for {
+					deleted, err := orphanViews.CleanOrphans(workerCtx, 1000)
+					if err != nil {
+						log.Printf("清理孤儿播放明细失败：%v", err)
+						break
+					}
+					if deleted == 0 {
+						break
+					}
+					log.Printf("已清理 %d 条孤儿播放明细", deleted)
+				}
+			}
+		}
+	}()
 
 	notificationPublisher := notification.NewOutboxPublisher(notificationRepo, mqClient)
 	go func() {

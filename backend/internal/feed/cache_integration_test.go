@@ -50,7 +50,7 @@ func newContentFixture(t *testing.T) *contentFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	dbtest.Migrate(t, database, &account.Account{}, &video.Video{}, &video.Like{}, &video.Comment{}, &video.Favorite{}, &notification.Notification{})
+	dbtest.Migrate(t, database, &account.Account{}, &video.Video{}, &video.Like{}, &video.Comment{}, &video.Favorite{}, &video.VideoView{}, &notification.Notification{})
 	redisDB, err := strconv.Atoi(number)
 	if err != nil || redisDB < 0 {
 		t.Fatal("invalid Redis database")

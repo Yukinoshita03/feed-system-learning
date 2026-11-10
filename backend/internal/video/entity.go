@@ -14,6 +14,7 @@ type Video struct {
 	CommentsCount  int64  `gorm:"not null;default:0" json:"comments_count"`
 	// CreateTime 在新建记录时由 GORM 自动填写，供最新视频流排序使用。
 	CreateTime time.Time `gorm:"autoCreateTime;index" json:"create_time"`
+	ViewCount  int64     `gorm:"not null;default:0" json:"view_count"`
 }
 
 // CreateVideoRequest 是创建时接收的 JSON，作者身份从登录态获取。

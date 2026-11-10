@@ -11,7 +11,12 @@ import (
 	"gorm.io/gorm"
 )
 
-// Migrate 在多个测试包并行使用同一个测试库时也能工作。
+// Migrate 建表并处理并发冲突。
+//
+// 注意：每个 fixture 必须把自己断言会触及的**所有**表都列进来，不能只列
+// 主要那几张。常见漏项是被删视频时连带清理的从表（likes/comments/favorites/
+// video_views）：业务代码往 DeleteVideo 里加一张表，忘记同步 fixture，就会在
+// 跑测试时报 "Table ... doesn't exist"。
 //
 // go test ./... 会并行运行不同包的测试二进制，它们会对同一批表调用 AutoMigrate。
 // GORM 的 AutoMigrate 是"先 HasTable 再 CREATE"，并发时后到的一方会拿到

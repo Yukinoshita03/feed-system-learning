@@ -36,7 +36,7 @@ func followingFixture(t *testing.T, userCount int) (*FeedService, *gorm.DB, []ac
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	dbtest.Migrate(t, database,
-		&account.Account{}, &video.Video{}, &video.Like{}, &video.Comment{}, &video.Favorite{},
+		&account.Account{}, &video.Video{}, &video.Like{}, &video.Comment{}, &video.Favorite{}, &video.VideoView{},
 		&social.Follow{}, &notification.Notification{}, &notification.OutboxMessage{})
 
 	tx := database.Begin()

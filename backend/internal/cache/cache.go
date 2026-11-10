@@ -181,3 +181,38 @@ func keyPairs(keys []string) []string {
 	}
 	return pairs
 }
+
+// Forget 删除一个标记。业务写入失败时调用，让调用方可以立刻重试，
+// 而不是被自己的标记挡到窗口过期。使用 WithoutCancel：客户端取消请求时
+// 同样要清理，否则脏标记会一直留到 TTL 到期。
+func (c *Client) Forget(ctx context.Context, key string) {
+	if c == nil || c.redis == nil || key == "" {
+		return
+	}
+	cacheCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.config.Timeout)
+	defer cancel()
+	if err := c.redis.Del(cacheCtx, key).Err(); err != nil {
+		log.Printf("删除去重标记失败，窗口到期后自动收敛：%v", err)
+	}
+}
+
+// MarkOnce 尝试在 ttl 内独占一个标记，返回 true 表示这是第一次。
+//
+// 用 SETNX 而不是"先 GET 再 SET"：后者在两个请求同时到达时会都读到"没有"，
+// 于是各写一条播放记录，去重失效。SETNX 的判定和写入在 Redis 内部是原子的。
+//
+// Redis 不可用时返回 true，让调用方继续写 MySQL：播放量宁可重复计数，
+// 也不能因为缓存故障把数据丢掉。
+func (c *Client) MarkOnce(ctx context.Context, key string, ttl time.Duration) bool {
+	if c == nil || c.redis == nil || key == "" || ttl < time.Millisecond {
+		return true
+	}
+	cacheCtx, cancel := context.WithTimeout(ctx, c.config.Timeout)
+	defer cancel()
+	created, err := c.redis.SetNX(cacheCtx, key, "1", ttl).Result()
+	if err != nil {
+		log.Printf("写入去重标记失败，按首次播放处理：%v", err)
+		return true
+	}
+	return created
+}

@@ -193,6 +193,10 @@ func (r *VideoRepository) DeleteVideo(ctx context.Context, id, authorID uint) er
 		if err := tx.Where("video_id = ?", id).Delete(&Favorite{}).Error; err != nil {
 			return err
 		}
+		// 播放明细同样按视频清理，避免删除后留下孤儿记录。
+		if err := tx.Where("video_id = ?", id).Delete(&VideoView{}).Error; err != nil {
+			return err
+		}
 		return tx.Delete(&item).Error
 	})
 	if err != nil {
