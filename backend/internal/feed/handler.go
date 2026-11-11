@@ -55,6 +55,44 @@ func (h *FeedHandler) ListFollowing(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, result)
 }
+
+// POST /feed/listByLikes：读取点赞排行榜。
+// window 只接受 24h / 7d；榜单是预先算好的，不支持的窗口没有数据可读。
+func (h *FeedHandler) ListByLikes(c *gin.Context) {
+	var req ListRankedRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式不正确"})
+		return
+	}
+
+	viewerID, _ := c.Get(middleware.AccountIDKey)
+	accountID, _ := viewerID.(uint)
+	result, err := h.service.ListByLikes(c.Request.Context(), req, accountID)
+	if err != nil {
+		writeFeedError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+// POST /feed/listByHot：读取热度排行榜。参数与 listByLikes 相同。
+func (h *FeedHandler) ListByHot(c *gin.Context) {
+	var req ListRankedRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式不正确"})
+		return
+	}
+
+	viewerID, _ := c.Get(middleware.AccountIDKey)
+	accountID, _ := viewerID.(uint)
+	result, err := h.service.ListByHot(c.Request.Context(), req, accountID)
+	if err != nil {
+		writeFeedError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 func writeFeedError(c *gin.Context, err error) {
 	if errors.Is(err, ErrInvalidFeed) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

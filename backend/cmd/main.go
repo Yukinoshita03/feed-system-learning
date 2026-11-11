@@ -2,12 +2,16 @@ package main
 
 import (
 	"context"
+	"fmt"
+
 	"feed-system-learning/internal/auth"
 	"feed-system-learning/internal/cache"
 	"feed-system-learning/internal/db"
+	"feed-system-learning/internal/feed"
 	"feed-system-learning/internal/mq"
 	"feed-system-learning/internal/notification"
 	"feed-system-learning/internal/router"
+	"feed-system-learning/internal/video"
 	"log"
 	"os"
 	"strconv"
@@ -95,12 +99,90 @@ func main() {
 
 	notificationConsumer := notification.NewConsumer(notificationRepo, mqClient)
 	for i := 0; i < 10; i++ {
-		go func() {
-			if err := notificationConsumer.Run(workerCtx, ""); err != nil {
-				log.Printf("通知消费者退出：%v", err)
-			}
-		}()
+		go notificationConsumer.RunForever(workerCtx, fmt.Sprintf("worker-%d", i))
 	}
+
+	// 播放上报不与视频删除抢锁，删除瞬间可能插入一条孤儿明细；
+	// 这里用低频扫描兜底收敛，每轮删一批避免长事务。
+	orphanViews := video.NewViewRepository(mydb, video.NewVideoRepository(mydb, dataCache))
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-workerCtx.Done():
+				return
+			case <-ticker.C:
+				for {
+					deleted, err := orphanViews.CleanOrphans(workerCtx, 1000)
+					if err != nil {
+						log.Printf("清理孤儿播放明细失败：%v", err)
+						break
+					}
+					if deleted == 0 {
+						break
+					}
+					log.Printf("已清理 %d 条孤儿播放明细", deleted)
+				}
+			}
+		}
+	}()
+
+	// 榜单：先把点赞明细增量汇总进小时桶，再从桶里聚合出榜单写 Redis。
+	// 填桶与重算都要求幂等（UPSERT / 整体覆盖），所以任务漏跑或重跑都能自愈。
+	filler := feed.NewBucketFiller(mydb)
+	rankingRepo := feed.NewFeedRepository(mydb, video.NewVideoRepository(mydb, dataCache), dataCache)
+	rankingRefresher := feed.NewRankingRefresher(rankingRepo, dataCache)
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+
+		// 启动时先跑一次，避免刚启动的几分钟里榜单是空的。
+		refreshRankings := func() {
+			if err := filler.Fill(workerCtx); err != nil {
+				log.Printf("填充互动小时桶失败：%v", err)
+			}
+			if err := rankingRefresher.RefreshAll(workerCtx); err != nil {
+				log.Printf("重算榜单失败：%v", err)
+			}
+		}
+		refreshRankings()
+
+		for {
+			select {
+			case <-workerCtx.Done():
+				return
+			case <-ticker.C:
+				refreshRankings()
+			}
+		}
+	}()
+
+	// 预聚合表会随时间无限增长，低频清理过期桶（保留 7 天窗口 + 1 天余量）。
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-workerCtx.Done():
+				return
+			case <-ticker.C:
+				for {
+					deleted, err := filler.CleanBuckets(workerCtx, 1000)
+					if err != nil {
+						log.Printf("清理过期点赞桶失败：%v", err)
+						break
+					}
+					if deleted == 0 {
+						break
+					}
+					log.Printf("已清理 %d 条过期点赞桶", deleted)
+				}
+			}
+		}
+	}()
 
 	notificationPublisher := notification.NewOutboxPublisher(notificationRepo, mqClient)
 	go func() {

@@ -63,6 +63,9 @@ func newCRUDFixture(t *testing.T) *crudFixture {
 		if err := database.Where("follower_id IN ? OR vlogger_id IN ?", ids, ids).Delete(&social.Follow{}).Error; err != nil {
 			t.Error(err)
 		}
+		if err := database.Where("user_id IN ?", ids).Delete(&social.RelationStat{}).Error; err != nil {
+			t.Error(err)
+		}
 		if err := database.Where("receiver_id IN ? OR actor_id IN ?", ids, ids).Delete(&notification.Notification{}).Error; err != nil {
 			t.Error(err)
 		}

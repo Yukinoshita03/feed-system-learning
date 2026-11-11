@@ -27,6 +27,20 @@ type FeedVideoItem struct {
 	CommentsCount int64      `json:"comments_count"`
 }
 
+// ListRankedRequest 是榜单请求。window 只能是受支持的窗口（24h / 7d），
+// 因为每个窗口对应一份预先算好的榜单，不支持的窗口没有数据可读。
+type ListRankedRequest struct {
+	Window string `json:"window"`
+	Limit  int    `json:"limit"`
+}
+
+// ListRankedResponse 是榜单结果。榜单不支持翻页：语义就是"最热的一小撮"，
+// 而且 ZSET 用分数游标在同分时会漏数据。
+type ListRankedResponse struct {
+	VideoList []FeedVideoItem `json:"video_list"`
+	Window    string          `json:"window"`
+}
+
 // ListLatestResponse 包含本页视频以及下一页的时间、ID 游标。
 type ListLatestResponse struct {
 	VideoList []FeedVideoItem `json:"video_list"`

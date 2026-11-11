@@ -49,6 +49,9 @@ func SetRouter(db *gorm.DB, tokens *auth.TokenManager, redisClient *redis.Client
 	videorepo := video.NewVideoRepository(db, dataCache)
 	videoservice := video.NewVideoService(videorepo)
 	videohandler := video.NewVideoHandler(videoservice)
+	viewrepo := video.NewViewRepository(db, videorepo)
+	viewservice := video.NewViewService(viewrepo)
+	viewhandler := video.NewViewHandler(viewservice)
 	videoRoutes := r.Group("/video")
 	videoRoutes.POST("/getDetail", videohandler.GetDetail)
 	videoRoutes.POST("/listByAuthorID", videohandler.ListByAuthorID)
@@ -59,6 +62,8 @@ func SetRouter(db *gorm.DB, tokens *auth.TokenManager, redisClient *redis.Client
 	protectedVideoRoutes.POST("/publish", videohandler.CreateVideo)
 	protectedVideoRoutes.POST("/update", videohandler.UpdateVideo)
 	protectedVideoRoutes.POST("/delete", videohandler.DeleteVideo)
+	// 播放上报需要登录态做去重键：游客没有账号，反复刷新会重复计数。
+	protectedVideoRoutes.POST("/recordView", viewhandler.Record)
 
 	commentrepo := video.NewCommentRepository(db, videorepo)
 	commenthandler := video.NewCommentHandler(video.NewCommentService(commentrepo))
@@ -106,6 +111,9 @@ func SetRouter(db *gorm.DB, tokens *auth.TokenManager, redisClient *redis.Client
 	feedhandler := feed.NewFeedHandler(feedservice)
 	feedRoutes := r.Group("/feed", middleware.OptionalJWT(tokens, accountrepo))
 	feedRoutes.POST("/listLatest", feedhandler.ListLatest)
+	// 榜单公开可读；带上登录态时会返回当前用户对每条视频的点赞状态。
+	feedRoutes.POST("/listByLikes", feedhandler.ListByLikes)
+	feedRoutes.POST("/listByHot", feedhandler.ListByHot)
 	// 关注流需要登录身份，单独挂强制校验；与公开视频流共用 /feed 前缀。
 	feedAuthRoutes := r.Group("/feed", middleware.RequireJWT(tokens, accountrepo))
 	feedAuthRoutes.POST("/listFollowing", feedhandler.ListFollowing)
