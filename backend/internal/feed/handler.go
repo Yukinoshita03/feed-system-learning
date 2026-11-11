@@ -75,6 +75,24 @@ func (h *FeedHandler) ListByLikes(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// POST /feed/listByHot：读取热度排行榜。参数与 listByLikes 相同。
+func (h *FeedHandler) ListByHot(c *gin.Context) {
+	var req ListRankedRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式不正确"})
+		return
+	}
+
+	viewerID, _ := c.Get(middleware.AccountIDKey)
+	accountID, _ := viewerID.(uint)
+	result, err := h.service.ListByHot(c.Request.Context(), req, accountID)
+	if err != nil {
+		writeFeedError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 func writeFeedError(c *gin.Context, err error) {
 	if errors.Is(err, ErrInvalidFeed) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

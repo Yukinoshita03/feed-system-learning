@@ -140,8 +140,8 @@ func main() {
 
 		// 启动时先跑一次，避免刚启动的几分钟里榜单是空的。
 		refreshRankings := func() {
-			if _, err := filler.Fill(workerCtx); err != nil {
-				log.Printf("填充点赞小时桶失败：%v", err)
+			if err := filler.Fill(workerCtx); err != nil {
+				log.Printf("填充互动小时桶失败：%v", err)
 			}
 			if err := rankingRefresher.RefreshAll(workerCtx); err != nil {
 				log.Printf("重算榜单失败：%v", err)

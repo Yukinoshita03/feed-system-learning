@@ -105,11 +105,21 @@ func (s *FeedService) toFeedItems(ctx context.Context, videos []video.Video, vie
 	return items, nil
 }
 
-// ListByLikes 从 Redis 榜单读取点赞排行。
+// ListByLikes 读取点赞排行。
+func (s *FeedService) ListByLikes(ctx context.Context, req ListRankedRequest, viewerID uint) (ListRankedResponse, error) {
+	return s.listRanked(ctx, RankingLikes, req, viewerID)
+}
+
+// ListByHot 读取热度排行。
+func (s *FeedService) ListByHot(ctx context.Context, req ListRankedRequest, viewerID uint) (ListRankedResponse, error) {
+	return s.listRanked(ctx, RankingHot, req, viewerID)
+}
+
+// listRanked 从 Redis 榜单读取某一类排行。
 //
 // 榜单是定时任务预先算好的，这里只做纯读取：取前 N 个 ID，回表补齐详情。
 // Redis 不可用时返回空列表而不是报错——榜单是辅助功能，不该让整个页面失败。
-func (s *FeedService) ListByLikes(ctx context.Context, req ListRankedRequest, viewerID uint) (ListRankedResponse, error) {
+func (s *FeedService) listRanked(ctx context.Context, kind RankingKind, req ListRankedRequest, viewerID uint) (ListRankedResponse, error) {
 	window, err := ParseRankingWindow(req.Window)
 	if err != nil {
 		return ListRankedResponse{}, err
@@ -131,7 +141,7 @@ func (s *FeedService) ListByLikes(ctx context.Context, req ListRankedRequest, vi
 		return response, nil
 	}
 
-	members := s.repo.cache.TopRank(ctx, rankKey(RankingLikes, window), limit)
+	members := s.repo.cache.TopRank(ctx, rankKey(kind, window), limit)
 	if len(members) == 0 {
 		return response, nil
 	}
