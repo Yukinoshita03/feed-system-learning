@@ -32,6 +32,7 @@ func AutoMigrate(database *gorm.DB) error {
 		&video.Comment{},
 		&video.Favorite{},
 		&social.Follow{},
+		&social.RelationStat{},
 		&notification.Notification{},
 		&notification.OutboxMessage{},
 		&video.VideoView{},

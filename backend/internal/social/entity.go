@@ -10,6 +10,15 @@ type Follow struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+// RelationStat 保存关注计数；缺失的旧数据统计行会根据 follows 表初始化。
+type RelationStat struct {
+	UserID         uint      `gorm:"primaryKey;column:user_id" json:"user_id"`
+	FollowingCount int64     `gorm:"not null;default:0" json:"following_count"`
+	FollowerCount  int64     `gorm:"not null;default:0" json:"follower_count"`
+	Initialized    bool      `gorm:"not null;default:false" json:"-"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
 type User struct {
 	ID        uint   `json:"id"`
 	Username  string `json:"username"`

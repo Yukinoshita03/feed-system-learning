@@ -7,7 +7,11 @@ import (
 	"feed-system-learning/internal/account"
 	"feed-system-learning/internal/notification"
 	"fmt"
+	"math/rand/v2"
+	"sort"
+	"time"
 
+	mysqlDriver "github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -16,57 +20,241 @@ type Repository struct{ db *gorm.DB }
 
 func NewRepository(db *gorm.DB) *Repository { return &Repository{db: db} }
 
-// SetFollowing 按账号 ID 升序逐个锁行，避免 A 关注 B 与 B 关注 A 的死锁。
+// SetFollowing 用关注关系的唯一索引仲裁并发变更；账号存在性检查不锁账号行。
 func (r *Repository) SetFollowing(ctx context.Context, actorID, targetID uint, active bool) (FollowResult, error) {
 	var result FollowResult
-	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		for _, id := range []uint{min(actorID, targetID), max(actorID, targetID)} {
-			var user account.Account
-			if err := tx.Select("id").Clauses(clause.Locking{Strength: "UPDATE"}).First(&user, id).Error; err != nil {
+	accountIDs := []uint{actorID}
+	if targetID != actorID {
+		accountIDs = append(accountIDs, targetID)
+	}
+	var foundAccountIDs []uint
+	if err := r.db.WithContext(ctx).Model(&account.Account{}).
+		Where("id IN ?", accountIDs).Pluck("id", &foundAccountIDs).Error; err != nil {
+		return result, err
+	}
+	if len(foundAccountIDs) != len(accountIDs) {
+		return result, gorm.ErrRecordNotFound
+	}
+
+	err := retryMySQLDeadlocks(ctx, func() error {
+		return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := ensureRelationStats(tx, accountIDs); err != nil {
 				return err
 			}
-		}
-		var existing Follow
-		err := tx.Where("follower_id = ? AND vlogger_id = ?", actorID, targetID).Take(&existing).Error
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-		exists := err == nil
-		if active && !exists {
-			existing = Follow{FollowerID: actorID, VloggerID: targetID}
-			if err := tx.Create(&existing).Error; err != nil {
-				return err
-			}
-			if targetID != actorID {
-				payload, err := json.Marshal(notification.FollowCreatedEvent{
-					FollowID:   existing.ID,
-					ActorID:    actorID,
-					ReceiverID: targetID,
-				})
-				if err != nil {
-					return err
+
+			if active {
+				relationship := Follow{FollowerID: actorID, VloggerID: targetID}
+				if err := tx.Create(&relationship).Error; err != nil {
+					if !isDuplicateKeyError(err) {
+						return err
+					}
+					// 联合唯一索引保证重复关注不会创建重复关系。
+				} else {
+					if targetID != actorID {
+						payload, err := json.Marshal(notification.FollowCreatedEvent{
+							FollowID:   relationship.ID,
+							ActorID:    actorID,
+							ReceiverID: targetID,
+						})
+						if err != nil {
+							return err
+						}
+						outbox := notification.OutboxMessage{
+							EventKey:  fmt.Sprintf("follow:%d", relationship.ID),
+							EventType: "follow.created",
+							Payload:   payload,
+						}
+						if err := tx.Create(&outbox).Error; err != nil {
+							return err
+						}
+					}
+					if err := updateRelationStats(tx, actorID, targetID, 1); err != nil {
+						return err
+					}
 				}
-				outbox := notification.OutboxMessage{
-					EventKey:  fmt.Sprintf("follow:%d", existing.ID),
-					EventType: "follow.created",
-					Payload:   payload,
+			} else {
+				deleted := tx.Where("follower_id = ? AND vlogger_id = ?", actorID, targetID).
+					Delete(&Follow{})
+				if deleted.Error != nil {
+					return deleted.Error
 				}
-				if err := tx.Create(&outbox).Error; err != nil {
-					return err
+				if deleted.RowsAffected > 0 {
+					if err := updateRelationStats(tx, actorID, targetID, -1); err != nil {
+						return err
+					}
 				}
 			}
-		} else if !active && exists {
-			if err := tx.Delete(&existing).Error; err != nil {
-				return err
-			}
-		}
-		result.IsFollowing = active
-		if err := tx.Model(&Follow{}).Where("follower_id = ?", actorID).Count(&result.FollowingCount).Error; err != nil {
-			return err
-		}
-		return tx.Model(&Follow{}).Where("vlogger_id = ?", targetID).Count(&result.FollowerCount).Error
+			return nil
+		})
 	})
-	return result, err
+	if err != nil {
+		return result, err
+	}
+	result.IsFollowing = active
+
+	// 关系事务提交后，在一次查询中读取两个计数。
+	stats, err := loadRelationStats(r.db.WithContext(ctx), accountIDs)
+	if err != nil {
+		return result, err
+	}
+	result.FollowingCount = stats[actorID].FollowingCount
+	result.FollowerCount = stats[targetID].FollowerCount
+	return result, nil
+}
+
+func isMySQLDeadlockError(err error) bool {
+	var mysqlErr *mysqlDriver.MySQLError
+	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1213
+}
+
+// retryMySQLDeadlocks 仅重试 MySQL 的 1213 死锁错误；每次重试都会重新执行整个事务。
+func retryMySQLDeadlocks(ctx context.Context, operation func() error) error {
+	const maxAttempts = 8
+	for attempt := 0; ; attempt++ {
+		err := operation()
+		if !isMySQLDeadlockError(err) || attempt == maxAttempts-1 {
+			return err
+		}
+
+		backoff := time.Duration(2<<attempt)*time.Millisecond + time.Duration(rand.IntN(8))*time.Millisecond
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func ensureRelationStats(tx *gorm.DB, userIDs []uint) error {
+	userIDs = orderedUniqueIDs(userIDs)
+	var existing []RelationStat
+	if err := tx.Where("user_id IN ?", userIDs).Find(&existing).Error; err != nil {
+		return err
+	}
+	byID := make(map[uint]*RelationStat, len(existing))
+	for i := range existing {
+		byID[existing[i].UserID] = &existing[i]
+	}
+
+	for _, id := range userIDs {
+		stat, found := byID[id]
+		if !found {
+			stat = &RelationStat{UserID: id}
+			// 直接 INSERT 后再处理重复键可能导致死锁：InnoDB 会在重复键检查时加共享锁，
+			// 并发事务随后都申请排他锁时可能互相等待。这里用 upsert 处理冲突，
+			// 让冲突路径直接获取该行的排他锁。
+			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(stat).Error; err != nil {
+				return err
+			}
+			var current RelationStat
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, id).Error; err != nil {
+				return err
+			}
+			stat = &current
+		} else if !stat.Initialized {
+			var current RelationStat
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, id).Error; err != nil {
+				return err
+			}
+			stat = &current
+			byID[id] = stat
+		}
+
+		if !stat.Initialized {
+			if err := tx.Model(&Follow{}).Where("follower_id = ?", id).Count(&stat.FollowingCount).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&Follow{}).Where("vlogger_id = ?", id).Count(&stat.FollowerCount).Error; err != nil {
+				return err
+			}
+			stat.Initialized = true
+			if err := tx.Model(&RelationStat{}).Where("user_id = ?", id).Updates(map[string]any{
+				"following_count": stat.FollowingCount,
+				"follower_count":  stat.FollowerCount,
+				"initialized":     true,
+			}).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func updateRelationStats(tx *gorm.DB, actorID, targetID uint, delta int64) error {
+	if actorID == targetID {
+		updates := map[string]any{}
+		if delta > 0 {
+			updates["following_count"] = gorm.Expr("following_count + ?", delta)
+			updates["follower_count"] = gorm.Expr("follower_count + ?", delta)
+		} else {
+			updates["following_count"] = gorm.Expr("GREATEST(following_count + ?, 0)", delta)
+			updates["follower_count"] = gorm.Expr("GREATEST(follower_count + ?, 0)", delta)
+		}
+		return tx.Model(&RelationStat{}).Where("user_id = ?", actorID).UpdateColumns(updates).Error
+	}
+
+	ids := orderedUniqueIDs([]uint{actorID, targetID})
+	for _, id := range ids {
+		column := "following_count"
+		if id == targetID {
+			column = "follower_count"
+		}
+		expression := gorm.Expr(column+" + ?", delta)
+		if delta < 0 {
+			expression = gorm.Expr("GREATEST("+column+" + ?, 0)", delta)
+		}
+		updated := tx.Model(&RelationStat{}).Where("user_id = ?", id).UpdateColumn(column, expression)
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+	}
+	return nil
+}
+
+func loadRelationStats(db *gorm.DB, userIDs []uint) (map[uint]RelationStat, error) {
+	var rows []RelationStat
+	if err := db.Where("user_id IN ?", userIDs).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	stats := make(map[uint]RelationStat, len(rows))
+	for _, row := range rows {
+		stats[row.UserID] = row
+	}
+	if len(stats) != len(orderedUniqueIDs(userIDs)) {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return stats, nil
+}
+
+func orderedUniqueIDs(ids []uint) []uint {
+	unique := make([]uint, 0, len(ids))
+	for _, id := range ids {
+		found := false
+		for _, existing := range unique {
+			if existing == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			unique = append(unique, id)
+		}
+	}
+	sort.Slice(unique, func(i, j int) bool { return unique[i] < unique[j] })
+	return unique
+}
+
+func isDuplicateKeyError(err error) bool {
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	var mysqlErr *mysqlDriver.MySQLError
+	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1062
 }
 
 func (r *Repository) IsFollowing(ctx context.Context, actorID, targetID uint) (bool, error) {
