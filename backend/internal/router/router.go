@@ -111,6 +111,8 @@ func SetRouter(db *gorm.DB, tokens *auth.TokenManager, redisClient *redis.Client
 	feedhandler := feed.NewFeedHandler(feedservice)
 	feedRoutes := r.Group("/feed", middleware.OptionalJWT(tokens, accountrepo))
 	feedRoutes.POST("/listLatest", feedhandler.ListLatest)
+	// 榜单公开可读；带上登录态时会返回当前用户对每条视频的点赞状态。
+	feedRoutes.POST("/listByLikes", feedhandler.ListByLikes)
 	// 关注流需要登录身份，单独挂强制校验；与公开视频流共用 /feed 前缀。
 	feedAuthRoutes := r.Group("/feed", middleware.RequireJWT(tokens, accountrepo))
 	feedAuthRoutes.POST("/listFollowing", feedhandler.ListFollowing)

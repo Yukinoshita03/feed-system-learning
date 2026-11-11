@@ -35,5 +35,6 @@ func AutoMigrate(database *gorm.DB) error {
 		&notification.Notification{},
 		&notification.OutboxMessage{},
 		&video.VideoView{},
+		&video.LikeHourly{},
 	)
 }

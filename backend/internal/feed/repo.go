@@ -103,6 +103,15 @@ func (r *FeedRepository) ListFollowing(ctx context.Context, viewerID uint, limit
 	return videos, nil
 }
 
+// FindVideosByIDs 按 ID 批量取视频，走 video 包已有的详情缓存。
+// 榜单只存了 ID，需要回表拿标题、封面等信息；返回顺序不保证与入参一致。
+func (r *FeedRepository) FindVideosByIDs(ctx context.Context, ids []uint) ([]video.Video, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	return r.videos.GetByIDs(ctx, ids)
+}
+
 // FindAuthorsByIDs 一次查询本页作者的公开资料，避免逐条视频查询作者。
 func (r *FeedRepository) FindAuthorsByIDs(ctx context.Context, ids []uint) ([]FeedAuthor, error) {
 	authors := make([]FeedAuthor, 0)
