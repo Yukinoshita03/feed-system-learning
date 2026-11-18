@@ -19,28 +19,19 @@ const state = reactive({
   loading: false,
   error: '',
   items: [] as FeedVideoItem[],
-  hasMore: false,
   limit: 10,
-  asOf: 0,
-  nextOffset: 0,
+  window: '24h' as '24h' | '7d',
 })
 
 const likeBusy = reactive<Record<string, boolean>>({})
 
-async function loadHot(reset: boolean) {
+async function loadHot() {
   if (state.loading) return
   state.loading = true
   state.error = ''
   try {
-    const res = await feedApi.listByPopularity({
-      limit: state.limit,
-      as_of: reset ? 0 : state.asOf,
-      offset: reset ? 0 : state.nextOffset,
-    })
-    state.hasMore = res.has_more
-    state.asOf = res.as_of
-    state.nextOffset = res.next_offset
-    state.items = reset ? res.video_list : state.items.concat(res.video_list)
+    const res = await feedApi.listByHot({ limit: state.limit, window: state.window })
+    state.items = res.video_list
   } catch (e) {
     state.error = e instanceof ApiError ? e.message : String(e)
   } finally {
@@ -76,7 +67,7 @@ async function toggleLike(item: FeedVideoItem) {
 }
 
 onMounted(async () => {
-  await loadHot(true)
+  await loadHot()
 })
 </script>
 
@@ -86,14 +77,17 @@ onMounted(async () => {
       <div class="row" style="justify-content: space-between; align-items: baseline">
         <div>
           <p class="title" style="margin: 0">热榜</p>
-          <p class="subtle" style="margin: 6px 0 0">按热度排序（/feed/listByPopularity）</p>
+          <p class="subtle" style="margin: 6px 0 0">按互动热度排序</p>
         </div>
 
         <div class="row">
           <label class="subtle" style="margin: 0">limit</label>
           <input v-model.number="state.limit" type="number" min="1" max="50" style="width: 90px" :disabled="state.loading" />
-          <button class="primary" type="button" :disabled="state.loading" @click="loadHot(true)">刷新</button>
-          <button type="button" :disabled="state.loading || !state.hasMore" @click="loadHot(false)">加载更多</button>
+          <select v-model="state.window" :disabled="state.loading" aria-label="榜单时间范围">
+            <option value="24h">24 小时</option>
+            <option value="7d">7 天</option>
+          </select>
+          <button class="primary" type="button" :disabled="state.loading" @click="loadHot()">刷新</button>
         </div>
       </div>
 

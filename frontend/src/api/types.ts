@@ -71,27 +71,9 @@ export type ListLatestResponse = {
   has_more: boolean
 }
 
-export type ListLikesCountResponse = {
+export type ListRankedResponse = {
   video_list: FeedVideoItem[]
-  next_likes_count_before?: number
-  next_id_before?: number
-  has_more: boolean
-}
-
-export type ListByPopularityResponse = {
-  video_list: FeedVideoItem[]
-  as_of: number
-  next_offset: number
-  has_more: boolean
-  next_latest_popularity?: number
-  next_latest_before?: string
-  next_latest_id_before?: number
-}
-
-export type ListByFollowingResponse = {
-  video_list: FeedVideoItem[]
-  next_time: number
-  has_more: boolean
+  window: '24h' | '7d'
 }
 
 export type IsLikedResponse = {

@@ -1,4 +1,4 @@
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { ApiError } from '../api/client'
 import * as feedApi from '../api/feed'
 import type { FeedVideoItem } from '../api/types'
@@ -20,15 +20,24 @@ export function useVideoFeed() {
     items: [] as FeedVideoItem[],
     loading: false, error: '',
     hasMore: false,
-    nextLikesCountBefore: undefined as number | undefined,
-    nextIdBefore: undefined as number | undefined,
   })
 
   const following = reactive({
     items: [] as FeedVideoItem[],
     loading: false, error: '',
-    hasMore: false, nextTime: 0,
+    hasMore: false, nextTime: 0, nextId: 0,
   })
+
+  let followingGeneration = 0
+  watch(() => auth.claims?.account_id ?? 0, () => {
+    followingGeneration += 1
+    following.items = []
+    following.loading = false
+    following.error = ''
+    following.hasMore = false
+    following.nextTime = 0
+    following.nextId = 0
+  }, { flush: 'sync' })
 
   const currentState = computed(() => {
     if (tab.value === 'hot') return hot
@@ -57,20 +66,14 @@ export function useVideoFeed() {
     }
   }
 
-  async function loadHot(reset: boolean) {
+  async function loadHot() {
     if (hot.loading) return
     hot.loading = true
     hot.error = ''
     try {
-      const res = await feedApi.listLikesCount({
-        limit: 10,
-        likes_count_before: reset ? undefined : hot.nextLikesCountBefore,
-        id_before: reset ? undefined : hot.nextIdBefore,
-      })
-      hot.hasMore = res.has_more
-      hot.nextLikesCountBefore = res.next_likes_count_before
-      hot.nextIdBefore = res.next_id_before
-      hot.items = reset ? res.video_list : hot.items.concat(res.video_list)
+      const res = await feedApi.listByLikes({ limit: 50, window: '24h' })
+      hot.hasMore = false
+      hot.items = res.video_list
     } catch (e) {
       hot.error = e instanceof ApiError ? e.message : String(e)
     } finally {
@@ -84,23 +87,30 @@ export function useVideoFeed() {
       return
     }
     if (following.loading) return
+    const generation = followingGeneration
     following.loading = true
     following.error = ''
     try {
-      const res = await feedApi.listByFollowing({ limit: 10, latest_time: reset ? 0 : following.nextTime })
+      const res = await feedApi.listFollowing({
+        limit: 10,
+        latest_time: reset ? 0 : following.nextTime,
+        latest_id: reset ? 0 : following.nextId,
+      })
+      if (generation !== followingGeneration) return
       following.hasMore = res.has_more
       following.nextTime = res.next_time
+      following.nextId = res.next_id
       following.items = reset ? res.video_list : following.items.concat(res.video_list)
     } catch (e) {
-      following.error = e instanceof ApiError ? e.message : String(e)
+      if (generation === followingGeneration) following.error = e instanceof ApiError ? e.message : String(e)
     } finally {
-      following.loading = false
+      if (generation === followingGeneration) following.loading = false
     }
   }
 
   async function ensureTabLoaded() {
     if (tab.value === 'recommend' && recommend.items.length === 0) await loadRecommend(true)
-    if (tab.value === 'hot' && hot.items.length === 0) await loadHot(true)
+    if (tab.value === 'hot' && hot.items.length === 0) await loadHot()
     if (tab.value === 'following' && following.items.length === 0) await loadFollowing(true)
   }
 
@@ -109,7 +119,6 @@ export function useVideoFeed() {
     if (items.length === 0) return
     if (activeIndex < items.length - 3) return
     if (tab.value === 'recommend' && recommend.hasMore) await loadRecommend(false)
-    if (tab.value === 'hot' && hot.hasMore) await loadHot(false)
     if (tab.value === 'following' && following.hasMore) await loadFollowing(false)
   }
 
