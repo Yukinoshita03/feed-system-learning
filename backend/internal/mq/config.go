@@ -8,13 +8,15 @@ import (
 )
 
 type Config struct {
-	URL           string
-	Exchange      string
-	ExchangeType  string
-	Queue         string
-	BindingKey    string
-	ConsumerTag   string
-	PrefetchCount int
+	URL                    string
+	Exchange               string
+	ExchangeType           string
+	Queue                  string
+	BindingKey             string
+	ConsumerTag            string
+	PrefetchCount          int
+	CounterQueue           string
+	CounterDeadLetterQueue string
 
 	// DeadLetterExchange 接收被拒绝的消息；DeadLetterQueue 保存它们等人处理。
 	// 死信不自动消费，否则问题会被"绕过"而不是被发现。
@@ -25,13 +27,15 @@ type Config struct {
 func LoadConfig() (Config, error) {
 	//默认参数
 	config := Config{
-		URL:           "amqp://feeddev:feeddev-local-password@127.0.0.1:5672/",
-		Exchange:      "feed.events",
-		ExchangeType:  "topic",
-		Queue:         "feed.notification",
-		BindingKey:    "notification.#",
-		ConsumerTag:   "feed-notification-worker",
-		PrefetchCount: 10,
+		URL:                    "amqp://feeddev:feeddev-local-password@127.0.0.1:5672/",
+		Exchange:               "feed.events",
+		ExchangeType:           "topic",
+		Queue:                  "feed.notification",
+		BindingKey:             "notification.#",
+		ConsumerTag:            "feed-notification-worker",
+		PrefetchCount:          10,
+		CounterQueue:           "feed.counter",
+		CounterDeadLetterQueue: "feed.counter.dlq",
 
 		DeadLetterExchange: "feed.dlx",
 		DeadLetterQueue:    "feed.notification.dlq",
@@ -45,6 +49,12 @@ func LoadConfig() (Config, error) {
 	}
 	if value := strings.TrimSpace(os.Getenv("RABBITMQ_QUEUE")); value != "" {
 		config.Queue = value
+	}
+	if value := strings.TrimSpace(os.Getenv("RABBITMQ_COUNTER_QUEUE")); value != "" {
+		config.CounterQueue = value
+	}
+	if value := strings.TrimSpace(os.Getenv("RABBITMQ_COUNTER_DLQ")); value != "" {
+		config.CounterDeadLetterQueue = value
 	}
 	if value := strings.TrimSpace(os.Getenv("RABBITMQ_BINDING_KEY")); value != "" {
 		config.BindingKey = value

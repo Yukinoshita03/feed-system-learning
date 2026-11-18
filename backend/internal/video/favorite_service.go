@@ -42,5 +42,8 @@ func (s *FavoriteService) List(ctx context.Context, accountID uint, req paginati
 		page.VideoList = append(page.VideoList, item.Video)
 		page.NextID = item.CursorID
 	}
+	if err := s.repo.videos.FillCounters(ctx, page.VideoList); err != nil {
+		return FavoritePage{}, err
+	}
 	return page, nil
 }

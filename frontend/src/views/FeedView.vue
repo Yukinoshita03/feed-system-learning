@@ -56,6 +56,7 @@ const action = reactive<{ loading: boolean; error: string; payload: unknown; nam
 })
 
 const canLike = computed(() => auth.isLoggedIn)
+const likeBusy = reactive<Record<number, boolean>>({})
 
 async function runAction(name: string, fn: () => Promise<unknown>) {
   action.name = name
@@ -127,16 +128,27 @@ async function loadFollowing(reset: boolean) {
 }
 
 async function toggleLike(item: FeedVideoItem) {
-  if (!auth.isLoggedIn) return
-
-  await runAction(item.is_liked ? '取消点赞' : '点赞', async () => {
-    if (item.is_liked) await likeApi.unlike(item.id)
-    else await likeApi.like(item.id)
-
-    item.is_liked = !item.is_liked
-    item.likes_count = Math.max(0, item.likes_count + (item.is_liked ? 1 : -1))
-    return { ok: true, is_liked: item.is_liked, likes_count: item.likes_count }
-  })
+  if (!auth.isLoggedIn || likeBusy[item.id]) return
+  likeBusy[item.id] = true
+  const wasLiked = item.is_liked
+  const oldCount = item.likes_count
+  const desired = !wasLiked
+  item.is_liked = desired
+  item.likes_count = Math.max(0, oldCount + (desired ? 1 : -1))
+  try {
+    await runAction(desired ? '点赞' : '取消点赞', async () => {
+      try {
+        const result = desired ? await likeApi.like(item.id) : await likeApi.unlike(item.id)
+        item.is_liked = result.is_liked
+        if (result.is_liked !== desired) item.likes_count = oldCount
+        return result
+      } catch (error) {
+        item.is_liked = wasLiked
+        item.likes_count = oldCount
+        throw error
+      }
+    })
+  } finally { likeBusy[item.id] = false }
 }
 
 onMounted(async () => {

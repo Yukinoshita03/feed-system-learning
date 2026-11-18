@@ -100,9 +100,7 @@ export type IsLikedResponse = {
 
 export type LikeResponse = MessageResponse & {
   is_liked: boolean
-  likes_count: number
-  favorites_count?: number
-  comments_count?: number
+  changed: boolean
 }
 
 export type GetAllFollowersResponse = {

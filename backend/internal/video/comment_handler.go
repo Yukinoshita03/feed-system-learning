@@ -14,7 +14,7 @@ func NewCommentHandler(service *CommentService) *CommentHandler {
 	return &CommentHandler{service: service}
 }
 
-// POST /comment/publish：当前登录账号发布评论，正文和计数一起入库。
+// POST /comment/publish：正文和计数事件一起提交，展示总数异步更新。
 func (h *CommentHandler) Publish(c *gin.Context) {
 	var req PublishCommentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -25,12 +25,12 @@ func (h *CommentHandler) Publish(c *gin.Context) {
 	if !ok {
 		return
 	}
-	item, count, err := h.service.Publish(c.Request.Context(), actor, req)
+	item, err := h.service.Publish(c.Request.Context(), actor, req)
 	if err != nil {
 		writeCommentError(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"message": "评论发布成功", "comment": item, "comments_count": count})
+	c.JSON(http.StatusCreated, gin.H{"message": "评论发布成功", "comment": item})
 }
 
 // POST /comment/list：游客可以分页阅读；before_id 为上一页的 next_id。
@@ -70,12 +70,12 @@ func (h *CommentHandler) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	count, err := h.service.Delete(c.Request.Context(), req.CommentID, actor)
+	changed, err := h.service.Delete(c.Request.Context(), req.CommentID, actor)
 	if err != nil {
 		writeCommentError(c, err)
 		return
 	}
-	c.JSON(200, gin.H{"message": "评论已删除", "comments_count": count})
+	c.JSON(200, gin.H{"message": "评论已删除", "changed": changed})
 }
 
 func writeCommentError(c *gin.Context, err error) {

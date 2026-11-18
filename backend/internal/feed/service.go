@@ -58,6 +58,9 @@ func (s *FeedService) toFeedItems(ctx context.Context, videos []video.Video, vie
 	if len(videos) == 0 {
 		return items, nil
 	}
+	if err := s.repo.videos.FillCounters(ctx, videos); err != nil {
+		return nil, fmt.Errorf("查询视频计数失败：%w", err)
+	}
 
 	authorIDs := make([]uint, 0, len(videos))
 	seenAuthorIDs := make(map[uint]bool)

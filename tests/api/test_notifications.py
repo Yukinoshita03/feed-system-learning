@@ -3,10 +3,21 @@ from concurrent.futures import ThreadPoolExecutor
 import allure
 import pytest
 import requests
+import time
 
 from test_comments import call
 
 pytestmark = [allure.feature("互动通知 CRUD")]
+
+
+def await_notifications(http, base, headers, count):
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        messages = call(http, base, "/notification/list", {}, headers)["messages"]
+        if len(messages) == count:
+            return messages
+        time.sleep(0.05)
+    pytest.fail(f"通知异步投递没有收敛到 {count} 条")
 
 
 @pytest.fixture
@@ -33,7 +44,7 @@ def test_notification_generation_dedup_read_delete_and_isolation(api_base_url, h
         call(http, api_base_url, "/favorite/favorite", {"video_id": video["id"]}, ah)
         call(http, api_base_url, "/social/follow", {"vlogger_id": owner["account_id"]}, ah)
     call(http, api_base_url, "/comment/publish", {"video_id": video["id"], "content": "通知里的评论"}, ah, 201)
-    messages = call(http, api_base_url, "/notification/list", {}, oh)["messages"]
+    messages = await_notifications(http, api_base_url, oh, 4)
     assert len(messages) == 4 and {m["kind"] for m in messages} == {"like", "favorite", "follow", "comment"}
     assert all(m["receiver_id"] == owner["account_id"] and m["actor_id"] == actor["account_id"] and m["actor_username"] == actor["username"] for m in messages)
     assert all(not {"event_key", "password", "access_token_hash"} & m.keys() for m in messages)
@@ -65,6 +76,7 @@ def test_notification_pagination_and_repeated_like_after_unlike(api_base_url, ht
     for _ in range(3):
         call(http, api_base_url, "/like/like", {"video_id": video["id"]}, ah)
         call(http, api_base_url, "/like/unlike", {"video_id": video["id"]}, ah)
+    await_notifications(http, api_base_url, oh, 3)
     first = call(http, api_base_url, "/notification/list", {"limit": 2}, oh)
     assert first["has_more"] and len(first["messages"]) == 2
     second = call(http, api_base_url, "/notification/list", {"limit": 2, "before_id": first["next_id"]}, oh)
@@ -76,6 +88,7 @@ def test_concurrent_like_retries_create_one_notification(api_base_url, http, not
     video, _, _, (oh, ah, _) = notification_context
     with ThreadPoolExecutor(max_workers=6) as pool:
         list(pool.map(lambda _: call(requests, api_base_url, "/like/like", {"video_id": video["id"]}, ah), range(12)))
+    await_notifications(http, api_base_url, oh, 1)
     assert call(http, api_base_url, "/notification/unreadCount", {}, oh)["unread_count"] == 1
 
 

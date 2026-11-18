@@ -19,11 +19,18 @@ export function useLikeFollow(needLogin: () => void) {
     const key = String(item.id)
     if (likeBusy[key]) return
     likeBusy[key] = true
+    const wasLiked = item.is_liked
+    const oldCount = item.likes_count
+    const desired = !wasLiked
+    item.is_liked = desired
+    item.likes_count = Math.max(0, oldCount + (desired ? 1 : -1))
     try {
-      const result = item.is_liked ? await likeApi.unlike(item.id) : await likeApi.like(item.id)
+      const result = desired ? await likeApi.like(item.id) : await likeApi.unlike(item.id)
       item.is_liked = result.is_liked
-      item.likes_count = result.likes_count
+      if (result.is_liked !== desired) item.likes_count = oldCount
     } catch (e) {
+      item.is_liked = wasLiked
+      item.likes_count = oldCount
       const msg = e instanceof ApiError ? e.message : String(e)
       toast.error(msg)
     } finally {

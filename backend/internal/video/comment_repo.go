@@ -4,12 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"feed-system-learning/internal/cache"
 	"feed-system-learning/internal/notification"
 	"fmt"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type CommentRepository struct {
@@ -21,19 +19,17 @@ func NewCommentRepository(db *gorm.DB, videos *VideoRepository) *CommentReposito
 	return &CommentRepository{db: db, videos: videos}
 }
 
-// Create 先锁视频，再插入评论和增加计数；视频删除也遵守相同锁顺序。
-func (r *CommentRepository) Create(ctx context.Context, item *Comment) (int64, error) {
-	var count int64
-	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+// Create 同步保存正文和 Outbox，计数在后台更新。
+func (r *CommentRepository) Create(ctx context.Context, item *Comment) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var current Video
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, item.VideoID).Error; err != nil {
+		if err := tx.Select("id", "author_id").First(&current, item.VideoID).Error; err != nil {
 			return err
 		}
 		if err := tx.Create(item).Error; err != nil {
-			return err
+			return interactionError(err)
 		}
-		if err := tx.Model(&Video{}).Where("id = ?", item.VideoID).
-			UpdateColumn("comments_count", gorm.Expr("comments_count + 1")).Error; err != nil {
+		if err := recordCounterDelta(tx, item.VideoID, KindComment, 1); err != nil {
 			return err
 		}
 		if current.AuthorID != item.AuthorID {
@@ -55,13 +51,8 @@ func (r *CommentRepository) Create(ctx context.Context, item *Comment) (int64, e
 				return err
 			}
 		}
-		count = current.CommentsCount + 1
 		return nil
 	})
-	if err == nil {
-		r.videos.invalidate(ctx, cache.VideoKey(item.VideoID))
-	}
-	return count, err
 }
 
 // List 只选择评论和公开用户名，不把账号密码或凭证带到响应里。
@@ -81,10 +72,9 @@ func (r *CommentRepository) List(ctx context.Context, videoID, beforeID uint, li
 	return items, err
 }
 
-// Delete 只允许作者删除；正文删除和计数扣减在同一事务完成。
-func (r *CommentRepository) Delete(ctx context.Context, commentID, authorID uint) (int64, error) {
-	var videoID uint
-	var count int64
+// Delete 只允许作者删除；正文删除和扣减事件在同一事务提交。
+func (r *CommentRepository) Delete(ctx context.Context, commentID, authorID uint) (bool, error) {
+	var changed bool
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var item Comment
 		if err := tx.First(&item, commentID).Error; err != nil {
@@ -93,11 +83,6 @@ func (r *CommentRepository) Delete(ctx context.Context, commentID, authorID uint
 		if item.AuthorID != authorID {
 			return ErrCommentForbidden
 		}
-		videoID = item.VideoID
-		var current Video
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, videoID).Error; err != nil {
-			return err
-		}
 		result := tx.Where("id = ? AND author_id = ?", commentID, authorID).Delete(&Comment{})
 		if result.Error != nil {
 			return result.Error
@@ -105,17 +90,16 @@ func (r *CommentRepository) Delete(ctx context.Context, commentID, authorID uint
 		if result.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
 		}
-		if err := tx.Model(&Video{}).Where("id = ?", videoID).
-			UpdateColumn("comments_count", gorm.Expr("GREATEST(comments_count - 1, 0)")).Error; err != nil {
+		if err := recordCounterDelta(tx, item.VideoID, KindComment, -1); err != nil {
 			return err
 		}
-		count = max(0, current.CommentsCount-1)
+		changed = true
 		return nil
 	})
-	if err == nil {
-		r.videos.invalidate(ctx, cache.VideoKey(videoID))
+	if err != nil {
+		return false, err
 	}
-	return count, err
+	return changed, nil
 }
 
 var ErrCommentForbidden = errors.New("只能删除自己的评论")

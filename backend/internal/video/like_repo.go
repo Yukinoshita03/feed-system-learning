@@ -3,14 +3,11 @@ package video
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 
-	"feed-system-learning/internal/cache"
 	"feed-system-learning/internal/notification"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type LikeRepository struct {
@@ -22,28 +19,24 @@ func NewLikeRepository(db *gorm.DB, videos *VideoRepository) *LikeRepository {
 	return &LikeRepository{db: db, videos: videos}
 }
 
-// SetLiked 在一个事务里更新点赞记录和计数；所有写入先锁视频行。
-// 视频删除也使用相同的锁顺序，避免删除后又插入孤立的点赞记录。
+// SetLiked 同步提交点赞事实和 Outbox；计数消费者异步更新独立的计数表。
 func (r *LikeRepository) SetLiked(ctx context.Context, videoID, accountID uint, liked bool) (LikeResult, error) {
 	result := LikeResult{}
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var current Video
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, videoID).Error; err != nil {
+		if err := tx.Select("id", "author_id").First(&current, videoID).Error; err != nil {
 			return err
 		}
-		var existing Like
-		err := tx.Where("video_id = ? AND account_id = ?", videoID, accountID).Take(&existing).Error
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-		exists := err == nil
-		if liked && !exists {
-			existing = Like{VideoID: videoID, AccountID: accountID}
+		result = LikeResult{IsLiked: liked}
+		if liked {
+			existing := Like{VideoID: videoID, AccountID: accountID}
 			if err := tx.Create(&existing).Error; err != nil {
-				return err
+				if duplicateKey(err, "uq_likes_video_account") {
+					return nil
+				}
+				return interactionError(err)
 			}
-			if err := tx.Model(&Video{}).Where("id = ?", videoID).
-				UpdateColumn("likes_count", gorm.Expr("likes_count + 1")).Error; err != nil {
+			if err := recordCounterDelta(tx, videoID, KindLike, 1); err != nil {
 				return err
 			}
 			if current.AuthorID != accountID {
@@ -65,25 +58,24 @@ func (r *LikeRepository) SetLiked(ctx context.Context, videoID, accountID uint, 
 					return err
 				}
 			}
-			current.LikesCount++
-		} else if !liked && exists {
-			if err := tx.Delete(&existing).Error; err != nil {
-				return err
+			result.Changed = true
+		} else {
+			deleted := tx.Where("video_id = ? AND account_id = ?", videoID, accountID).Delete(&Like{})
+			if deleted.Error != nil {
+				return deleted.Error
 			}
-			if err := tx.Model(&Video{}).Where("id = ?", videoID).
-				UpdateColumn("likes_count", gorm.Expr("GREATEST(likes_count - 1, 0)")).Error; err != nil {
-				return err
+			if deleted.RowsAffected > 0 {
+				if err := recordCounterDelta(tx, videoID, KindLike, -1); err != nil {
+					return err
+				}
+				result.Changed = true
 			}
-			current.LikesCount = max(0, current.LikesCount-1)
 		}
-		result = LikeResult{IsLiked: liked, LikesCount: current.LikesCount}
 		return nil
 	})
 	if err != nil {
 		return LikeResult{}, err
 	}
-	// 两个列表只存 ID，无需清除；使详情失效后即可获得新的公共计数。
-	r.videos.invalidate(ctx, cache.VideoKey(videoID))
 	return result, nil
 }
 
@@ -105,5 +97,8 @@ func (r *LikeRepository) ListLikedVideos(ctx context.Context, accountID uint) ([
 		Joins("JOIN likes ON likes.video_id = videos.id").
 		Where("likes.account_id = ?", accountID).
 		Order("likes.created_at DESC, likes.id DESC").Limit(200).Find(&videos).Error
+	if err == nil {
+		err = r.videos.FillCounters(ctx, videos)
+	}
 	return videos, err
 }

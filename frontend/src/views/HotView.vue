@@ -56,12 +56,18 @@ async function toggleLike(item: FeedVideoItem) {
   const key = String(item.id)
   if (likeBusy[key]) return
   likeBusy[key] = true
+  const wasLiked = item.is_liked
+  const oldCount = item.likes_count
+  const desired = !wasLiked
+  item.is_liked = desired
+  item.likes_count = Math.max(0, oldCount + (desired ? 1 : -1))
   try {
-    if (item.is_liked) await likeApi.unlike(item.id)
-    else await likeApi.like(item.id)
-    item.is_liked = !item.is_liked
-    item.likes_count = Math.max(0, item.likes_count + (item.is_liked ? 1 : -1))
+    const result = desired ? await likeApi.like(item.id) : await likeApi.unlike(item.id)
+    item.is_liked = result.is_liked
+    if (result.is_liked !== desired) item.likes_count = oldCount
   } catch (e) {
+    item.is_liked = wasLiked
+    item.likes_count = oldCount
     const msg = e instanceof ApiError ? e.message : String(e)
     toast.error(msg)
   } finally {

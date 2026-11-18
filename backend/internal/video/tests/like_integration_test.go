@@ -1,7 +1,10 @@
-package video
+package video_test
+
+import video "feed-system-learning/internal/video"
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -25,10 +28,10 @@ import (
 type likeFixture struct {
 	db       *gorm.DB
 	redis    *redis.Client
-	videos   *VideoRepository
-	service  *LikeService
+	videos   *video.VideoRepository
+	service  *video.LikeService
 	accounts []account.Account
-	items    []Video
+	items    []video.Video
 }
 
 func newLikeFixture(t *testing.T) *likeFixture {
@@ -46,7 +49,7 @@ func newLikeFixture(t *testing.T) *likeFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	dbtest.Migrate(t, database, &account.Account{}, &Video{}, &Like{}, &Comment{}, &Favorite{}, &VideoView{}, &notification.Notification{}, &notification.OutboxMessage{})
+	dbtest.Migrate(t, database, &account.Account{}, &video.Video{}, &video.VideoCounter{}, &video.VideoCounterConsumption{}, &video.Like{}, &video.Comment{}, &video.Favorite{}, &video.VideoView{}, &notification.Notification{}, &notification.OutboxMessage{})
 	f := &likeFixture{db: database}
 	var dataCache *cache.Client
 	if addr, number := os.Getenv("FEED_TEST_REDIS_ADDR"), os.Getenv("FEED_TEST_REDIS_DB"); addr != "" && number != "" {
@@ -64,8 +67,8 @@ func newLikeFixture(t *testing.T) *likeFixture {
 			t.Fatal(err)
 		}
 	}
-	f.videos = NewVideoRepository(database, dataCache)
-	f.service = NewLikeService(NewLikeRepository(database, f.videos))
+	f.videos = video.NewVideoRepository(database, dataCache)
+	f.service = video.NewLikeService(video.NewLikeRepository(database, f.videos))
 	for i := 0; i < 13; i++ {
 		f.accounts = append(f.accounts, account.Account{Username: fmt.Sprintf("like_%d_%d", time.Now().UnixNano(), i), Password: "test-password-hash"})
 	}
@@ -74,7 +77,10 @@ func newLikeFixture(t *testing.T) *likeFixture {
 	}
 	t.Cleanup(func() {
 		for _, item := range f.items {
-			if err := database.Where("video_id = ?", item.ID).Delete(&Like{}).Error; err != nil {
+			if err := database.Where("JSON_EXTRACT(payload, '$.video_id') = ?", item.ID).Delete(&notification.OutboxMessage{}).Error; err != nil {
+				t.Error(err)
+			}
+			if err := database.Where("video_id = ?", item.ID).Delete(&video.Like{}).Error; err != nil {
 				t.Error(err)
 			}
 			if err := database.Delete(&item).Error; err != nil {
@@ -102,9 +108,9 @@ func newLikeFixture(t *testing.T) *likeFixture {
 	return f
 }
 
-func (f *likeFixture) publish(t *testing.T) Video {
+func (f *likeFixture) publish(t *testing.T) video.Video {
 	t.Helper()
-	item := Video{AuthorID: f.accounts[0].ID, Title: "like-test", PlayURL: "/static/test.mp4", CoverURL: "/static/test.png"}
+	item := video.Video{AuthorID: f.accounts[0].ID, Title: "like-test", PlayURL: "/static/test.mp4", CoverURL: "/static/test.png"}
 	if err := f.videos.CreateVideo(context.Background(), &item); err != nil {
 		t.Fatal(err)
 	}
@@ -114,12 +120,13 @@ func (f *likeFixture) publish(t *testing.T) Video {
 
 func (f *likeFixture) assertCount(t *testing.T, id uint, want int64) {
 	t.Helper()
-	var item Video
+	f.applyCounters(t, id)
+	var item video.VideoCounter
 	var count int64
-	if err := f.db.First(&item, id).Error; err != nil {
+	if err := f.db.Where("video_id = ?", id).First(&item).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := f.db.Model(&Like{}).Where("video_id = ?", id).Count(&count).Error; err != nil {
+	if err := f.db.Model(&video.Like{}).Where("video_id = ?", id).Count(&count).Error; err != nil {
 		t.Fatal(err)
 	}
 	if item.LikesCount != want || count != want {
@@ -156,12 +163,15 @@ func TestLikeConcurrentDuplicateRequests(t *testing.T) {
 	f := newLikeFixture(t)
 	item := f.publish(t)
 	actor := f.accounts[1].ID
-	runLikeWorkers(t, 16, func(ctx context.Context, _ int) error { _, err := f.service.Like(ctx, item.ID, actor); return err })
+	runLikeWorkers(t, 16, func(ctx context.Context, _ int) error {
+		_, err := f.service.Like(ctx, item.ID, actor)
+		return err
+	})
 	f.assertCount(t, item.ID, 1)
 	if count := f.countOutbox(t, item.ID); count != 1 {
 		t.Fatalf("outbox events after duplicate likes=%d, want=1", count)
 	}
-	if err := f.db.Create(&Like{VideoID: item.ID, AccountID: actor}).Error; err == nil {
+	if err := f.db.Create(&video.Like{VideoID: item.ID, AccountID: actor}).Error; err == nil {
 		t.Fatal("database accepted a duplicate like")
 	}
 	runLikeWorkers(t, 16, func(ctx context.Context, _ int) error { _, err := f.service.Unlike(ctx, item.ID, actor); return err })
@@ -196,12 +206,12 @@ func TestLikeConcurrentAccountsAndMixedChanges(t *testing.T) {
 	f.assertCount(t, item.ID, 0)
 }
 
-func TestLikeCounterFailureRollsBackRecord(t *testing.T) {
+func TestLikeOutboxFailureRollsBackRecord(t *testing.T) {
 	f := newLikeFixture(t)
 	item := f.publish(t)
 	injected := errors.New("injected counter failure")
-	if err := f.db.Callback().Update().Before("gorm:update").Register("like:counter_failure", func(db *gorm.DB) {
-		if db.Statement.Table == "videos" {
+	if err := f.db.Callback().Create().Before("gorm:create").Register("like:counter_failure", func(db *gorm.DB) {
+		if db.Statement.Table == "notification_outbox" {
 			db.AddError(injected)
 		}
 	}); err != nil {
@@ -222,6 +232,7 @@ func (f *likeFixture) countOutbox(t *testing.T, videoID uint) int64 {
 	var count int64
 	if err := f.db.Model(&notification.OutboxMessage{}).
 		Where("JSON_EXTRACT(payload, '$.video_id') = ?", videoID).
+		Where("event_type <> ?", video.CounterEventType).
 		Count(&count).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +265,7 @@ func TestLikeListScopeOrderAndDelete(t *testing.T) {
 		t.Fatalf("after delete=%+v, error=%v", listed, err)
 	}
 	var remaining int64
-	if err := f.db.Model(&Like{}).Where("video_id = ?", second.ID).Count(&remaining).Error; err != nil || remaining != 0 {
+	if err := f.db.Model(&video.Like{}).Where("video_id = ?", second.ID).Count(&remaining).Error; err != nil || remaining != 0 {
 		t.Fatalf("orphan likes=%d, error=%v", remaining, err)
 	}
 }
@@ -273,10 +284,10 @@ func TestLikeConcurrentDeleteLeavesNoOrphans(t *testing.T) {
 		return err
 	})
 	var videos, likes int64
-	if err := f.db.Model(&Video{}).Where("id = ?", item.ID).Count(&videos).Error; err != nil {
+	if err := f.db.Model(&video.Video{}).Where("id = ?", item.ID).Count(&videos).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := f.db.Model(&Like{}).Where("video_id = ?", item.ID).Count(&likes).Error; err != nil {
+	if err := f.db.Model(&video.Like{}).Where("video_id = ?", item.ID).Count(&likes).Error; err != nil {
 		t.Fatal(err)
 	}
 	if videos != 0 || likes != 0 {
@@ -284,7 +295,7 @@ func TestLikeConcurrentDeleteLeavesNoOrphans(t *testing.T) {
 	}
 }
 
-func TestLikeInvalidatesConcurrentOldCountFill(t *testing.T) {
+func TestLikeProjectionOverridesConcurrentOldMetadataFill(t *testing.T) {
 	f := newLikeFixture(t)
 	if f.redis == nil {
 		t.Skip("set dedicated Redis configuration for cache invalidation test")
@@ -313,6 +324,7 @@ func TestLikeInvalidatesConcurrentOldCountFill(t *testing.T) {
 	if _, err := f.service.Like(context.Background(), item.ID, f.accounts[1].ID); err != nil {
 		t.Fatal(err)
 	}
+	f.applyCounters(t, item.ID)
 	unblock()
 	select {
 	case err := <-done:
@@ -322,11 +334,36 @@ func TestLikeInvalidatesConcurrentOldCountFill(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("old reader did not finish")
 	}
-	if f.redis.Exists(context.Background(), cache.VideoKey(item.ID)).Val() != 0 {
-		t.Fatal("old zero count was cached after like")
+	if f.redis.Exists(context.Background(), cache.VideoKey(item.ID)).Val() != 1 {
+		t.Fatal("metadata cache should remain reusable after like")
 	}
 	got, err := f.videos.GetByID(context.Background(), item.ID)
 	if err != nil || got.LikesCount != 1 {
 		t.Fatalf("new count=%+v, error=%v", got, err)
+	}
+}
+
+// applyCounters 只在需要验证最终收敛的断言前驱动消费；生产接口本身不会调用。
+func (f *likeFixture) counterEvents(t *testing.T, id uint) []video.CounterEvent {
+	t.Helper()
+	var messages []notification.OutboxMessage
+	if err := f.db.Where("event_type = ? AND JSON_EXTRACT(payload, '$.video_id') = ?", video.CounterEventType, id).Order("id ASC").Find(&messages).Error; err != nil {
+		t.Fatal(err)
+	}
+	events := make([]video.CounterEvent, 0, len(messages))
+	for _, message := range messages {
+		var event video.CounterEvent
+		if err := json.Unmarshal(message.Payload, &event); err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, event)
+	}
+	return events
+}
+
+func (f *likeFixture) applyCounters(t *testing.T, id uint) {
+	t.Helper()
+	if err := video.NewCounterRepository(f.db).ApplyBatch(context.Background(), f.counterEvents(t, id)); err != nil {
+		t.Fatal(err)
 	}
 }

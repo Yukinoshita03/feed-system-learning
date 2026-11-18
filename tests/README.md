@@ -170,3 +170,18 @@ FEED_TEST_MYSQL_DSN='root@tcp(127.0.0.1:3306)/feed_system_pytest?charset=utf8mb4
 ```bash
 python -m pytest tests/ui/test_crud_pages.py -q --alluredir=reports/allure-results
 ```
+
+
+## 异步互动计数回归
+
+三类互动写接口确认状态及 `changed`，不再返回同步总计数。`await_video_counts` 在有界时间内轮询详情，验证后台投影收敛；通知用例也等待异步投递。元数据缓存继续复用，计数从 `video_counters` 补齐。新增 `counter*_integration_test.go` 覆盖批量、乱序、重复、ACK 失败、外键、删除及离线迁移。
+
+已有测试库升级前也应先停写并执行 `go run ./cmd/migrate-counters -offline`；测试后端启动需要 RabbitMQ，且同时声明通知队列和计数队列。测试专用配置还包括 `RABBITMQ_COUNTER_QUEUE`、`RABBITMQ_COUNTER_DLQ`；隔离 Exchange、DLX、队列名称，避免误消费开发消息。
+
+Go 集成及 RabbitMQ 端到端回归可设置前文专用 MySQL/Redis 配置后执行：
+
+```bash
+RABBITMQ_SMOKE=1 go test -race -p 1 ./... -count=1 -timeout=120s
+```
+
+如果本机默认 Go 安装损坏，可为本次命令使用 `GOTOOLCHAIN=go1.24.5 GOSUMDB=sum.golang.org`，不需要改系统 Go 源码。页面刷新计数的测试先确认后台已追上，再验证刷新展示；点击时的红心和本地加减无需等待消费者。

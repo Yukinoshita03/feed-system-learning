@@ -27,20 +27,22 @@ def test_favorites_require_login(api_base_url, http, endpoint):
     call(http, api_base_url, "/favorite/" + endpoint, {"video_id": 1}, status=401)
 
 
-def test_favorite_lifecycle_isolation_and_cache(api_base_url, http, favorite_context, redis_command):
+def test_favorite_lifecycle_isolation_and_cache(api_base_url, http, favorite_context, redis_command, await_video_counts):
     videos, actor, other = favorite_context
     video = videos[0]
     body = {"video_id": video["id"], "account_id": 999999}
     call(http, api_base_url, "/video/getDetail", {"id": video["id"]})
-    for _ in range(2):
-        assert call(http, api_base_url, "/favorite/favorite", body, actor) == {"is_favorited": True, "favorites_count": 1}
-    assert redis_command("GET", f"video:detail:{video['id']}") is None
+    for attempt in range(2):
+        assert call(http, api_base_url, "/favorite/favorite", body, actor) == {"is_favorited": True, "changed": attempt == 0}
+    await_video_counts(video["id"], favorites_count=1)
+    assert redis_command("GET", f"video:detail:{video['id']}") is not None
     assert call(http, api_base_url, "/favorite/isFavorited", body, actor)["is_favorited"]
     assert not call(http, api_base_url, "/favorite/isFavorited", body, other)["is_favorited"]
     assert call(http, api_base_url, "/favorite/listMyFavorites", {"account_id": video["author_id"]}, other)["video_list"] == []
     assert call(http, api_base_url, "/video/getDetail", {"id": video["id"]})["favorites_count"] == 1
-    for _ in range(2):
-        assert call(http, api_base_url, "/favorite/unfavorite", body, actor) == {"is_favorited": False, "favorites_count": 0}
+    for attempt in range(2):
+        assert call(http, api_base_url, "/favorite/unfavorite", body, actor) == {"is_favorited": False, "changed": attempt == 0}
+    await_video_counts(video["id"], favorites_count=0)
     assert call(http, api_base_url, "/favorite/listMyFavorites", {}, actor)["video_list"] == []
 
 
@@ -61,13 +63,15 @@ def test_favorite_pagination_uses_favorite_order_and_removes_deleted_video(api_b
         call(http, api_base_url, "/favorite/" + endpoint, {"video_id": videos[-1]["id"]}, actor, 404)
 
 
-def test_concurrent_favorite_retries_do_not_duplicate_count(api_base_url, http, favorite_context):
+def test_concurrent_favorite_retries_do_not_duplicate_count(api_base_url, http, favorite_context, await_video_counts):
     videos, actor, _ = favorite_context
     body = {"video_id": videos[0]["id"]}
     for endpoint, expected in (("favorite", 1), ("unfavorite", 0)):
         with ThreadPoolExecutor(max_workers=6) as pool:
             results = list(pool.map(lambda _: call(requests, api_base_url, "/favorite/" + endpoint, body, actor), range(12)))
-        assert all(result["favorites_count"] == expected for result in results)
+        assert all(result["is_favorited"] is bool(expected) and "favorites_count" not in result for result in results)
+        assert sum(result["changed"] for result in results) == 1
+        await_video_counts(videos[0]["id"], favorites_count=expected)
         assert call(http, api_base_url, "/video/getDetail", {"id": videos[0]["id"]})["favorites_count"] == expected
 
 
