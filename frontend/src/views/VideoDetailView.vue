@@ -111,11 +111,19 @@ async function toggleLike() {
   if (state.busy) return
 
   state.busy = true
+  const video = state.video
+  const wasLiked = Boolean(state.isLiked)
+  const oldCount = video.likes_count
+  const desired = !wasLiked
+  state.isLiked = desired
+  video.likes_count = Math.max(0, oldCount + (desired ? 1 : -1))
   try {
-    const result = state.isLiked ? await likeApi.unlike(id.value) : await likeApi.like(id.value)
-    state.isLiked = result.is_liked
-    state.video.likes_count = result.likes_count
+    const result = desired ? await likeApi.like(video.id) : await likeApi.unlike(video.id)
+    if (state.video?.id === video.id) state.isLiked = result.is_liked
+    if (result.is_liked !== desired) video.likes_count = oldCount
   } catch (e) {
+    if (state.video?.id === video.id) state.isLiked = wasLiked
+    video.likes_count = oldCount
     const msg = e instanceof ApiError ? e.message : String(e)
     toast.error(msg)
   } finally {
@@ -128,11 +136,21 @@ async function toggleFavorite() {
   if (!auth.isLoggedIn) return needLogin()
   if (state.busy) return
   state.busy = true
+  const video = state.video
+  const wasFavorited = state.isFavorited
+  const oldCount = video.favorites_count ?? 0
+  const desired = !wasFavorited
+  state.isFavorited = desired
+  video.favorites_count = Math.max(0, oldCount + (desired ? 1 : -1))
   try {
-    const result = state.isFavorited ? await favoriteApi.unfavorite(id.value) : await favoriteApi.favorite(id.value)
-    state.isFavorited = result.is_favorited
-    state.video.favorites_count = result.favorites_count
-  } catch (e) { toast.error(e instanceof ApiError ? e.message : String(e)) }
+    const result = desired ? await favoriteApi.favorite(video.id) : await favoriteApi.unfavorite(video.id)
+    if (state.video?.id === video.id) state.isFavorited = result.is_favorited
+    if (result.is_favorited !== desired) video.favorites_count = oldCount
+  } catch (e) {
+    if (state.video?.id === video.id) state.isFavorited = wasFavorited
+    video.favorites_count = oldCount
+    toast.error(e instanceof ApiError ? e.message : String(e))
+  }
   finally { state.busy = false }
 }
 
@@ -201,6 +219,7 @@ async function openComments() {
 
 async function publishComment() {
   if (!state.video) return
+  if (drawer.loading) return
   if (!auth.isLoggedIn) return needLogin()
   const content = drawer.content.trim()
   if (!content) return
@@ -208,7 +227,9 @@ async function publishComment() {
   drawer.loading = true
   drawer.error = ''
   try {
-    await commentApi.publish(state.video.id, content)
+    const video = state.video
+    await commentApi.publish(video.id, content)
+    video.comments_count = (video.comments_count ?? 0) + 1
     drawer.content = ''
     await loadComments()
     toast.success('评论已发布')
@@ -227,13 +248,16 @@ function canDeleteComment(c: Comment) {
 
 async function deleteComment(commentId: number) {
   if (!state.video) return
+  if (drawer.loading) return
   if (!auth.isLoggedIn) return needLogin()
   if (!window.confirm('确认删除这条评论？')) return
 
   drawer.loading = true
   drawer.error = ''
   try {
-    await commentApi.remove(commentId)
+    const video = state.video
+    const result = await commentApi.remove(commentId)
+    if (result.changed) video.comments_count = Math.max(0, (video.comments_count ?? 0) - 1)
     await loadComments()
     toast.info('评论已删除')
   } catch (e) {

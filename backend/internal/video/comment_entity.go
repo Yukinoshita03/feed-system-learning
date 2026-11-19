@@ -11,6 +11,7 @@ type Comment struct {
 	VideoID  uint   `gorm:"not null;index:idx_comment_video_id,priority:1" json:"video_id"`
 	AuthorID uint   `gorm:"not null;index" json:"author_id"`
 	Content  string `gorm:"size:1000;not null" json:"content"`
+	Video    *Video `gorm:"foreignKey:VideoID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 	// CreatedAt 带索引：填桶任务按时间窗口回溯评论时，没有它只能全表扫描。
 	CreatedAt time.Time `gorm:"index:idx_comments_created_at" json:"created_at"`
 }

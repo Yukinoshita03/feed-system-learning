@@ -29,24 +29,25 @@ const latest = reactive<ListState & { limit: number; next_time: number; next_id:
   next_id: 0,
 })
 
-const likesCount = reactive<ListState & { limit: number; next_likes_count_before?: number; next_id_before?: number }>({
+const likesCount = reactive<ListState & { limit: number; window: '24h' | '7d' }>({
   loading: false,
   error: '',
   items: [],
   has_more: false,
   limit: 10,
-  next_likes_count_before: undefined,
-  next_id_before: undefined,
+  window: '24h',
 })
 
-const following = reactive<ListState & { limit: number; next_time: number }>({
+const following = reactive<ListState & { limit: number; next_time: number; next_id: number }>({
   loading: false,
   error: '',
   items: [],
   has_more: false,
   limit: 10,
   next_time: 0,
+  next_id: 0,
 })
+let followingGeneration = 0
 
 const action = reactive<{ loading: boolean; error: string; payload: unknown; name: string }>({
   loading: false,
@@ -56,6 +57,7 @@ const action = reactive<{ loading: boolean; error: string; payload: unknown; nam
 })
 
 const canLike = computed(() => auth.isLoggedIn)
+const likeBusy = reactive<Record<number, boolean>>({})
 
 async function runAction(name: string, fn: () => Promise<unknown>) {
   action.name = name
@@ -90,19 +92,12 @@ async function loadLatest(reset: boolean) {
   }
 }
 
-async function loadLikesCount(reset: boolean) {
+async function loadLikesCount() {
   likesCount.loading = true
   likesCount.error = ''
   try {
-    const res = await feedApi.listLikesCount({
-      limit: likesCount.limit,
-      likes_count_before: reset ? undefined : likesCount.next_likes_count_before,
-      id_before: reset ? undefined : likesCount.next_id_before,
-    })
-    likesCount.has_more = res.has_more
-    likesCount.next_likes_count_before = res.next_likes_count_before
-    likesCount.next_id_before = res.next_id_before
-    likesCount.items = reset ? res.video_list : likesCount.items.concat(res.video_list)
+    const res = await feedApi.listByLikes({ limit: likesCount.limit, window: likesCount.window })
+    likesCount.items = res.video_list
   } catch (e) {
     likesCount.error = e instanceof ApiError ? e.message : String(e)
   } finally {
@@ -111,50 +106,68 @@ async function loadLikesCount(reset: boolean) {
 }
 
 async function loadFollowing(reset: boolean) {
+  if (following.loading) return
+  const generation = followingGeneration
   following.loading = true
   following.error = ''
   try {
     const latest_time = reset ? 0 : following.next_time
-    const res = await feedApi.listByFollowing({ limit: following.limit, latest_time })
+    const latest_id = reset ? 0 : following.next_id
+    const res = await feedApi.listFollowing({ limit: following.limit, latest_time, latest_id })
+    if (generation !== followingGeneration) return
     following.has_more = res.has_more
     following.next_time = res.next_time
+    following.next_id = res.next_id
     following.items = reset ? res.video_list : following.items.concat(res.video_list)
   } catch (e) {
-    following.error = e instanceof ApiError ? e.message : String(e)
+    if (generation === followingGeneration) following.error = e instanceof ApiError ? e.message : String(e)
   } finally {
-    following.loading = false
+    if (generation === followingGeneration) following.loading = false
   }
 }
 
 async function toggleLike(item: FeedVideoItem) {
-  if (!auth.isLoggedIn) return
-
-  await runAction(item.is_liked ? '取消点赞' : '点赞', async () => {
-    if (item.is_liked) await likeApi.unlike(item.id)
-    else await likeApi.like(item.id)
-
-    item.is_liked = !item.is_liked
-    item.likes_count = Math.max(0, item.likes_count + (item.is_liked ? 1 : -1))
-    return { ok: true, is_liked: item.is_liked, likes_count: item.likes_count }
-  })
+  if (!auth.isLoggedIn || likeBusy[item.id]) return
+  likeBusy[item.id] = true
+  const wasLiked = item.is_liked
+  const oldCount = item.likes_count
+  const desired = !wasLiked
+  item.is_liked = desired
+  item.likes_count = Math.max(0, oldCount + (desired ? 1 : -1))
+  try {
+    await runAction(desired ? '点赞' : '取消点赞', async () => {
+      try {
+        const result = desired ? await likeApi.like(item.id) : await likeApi.unlike(item.id)
+        item.is_liked = result.is_liked
+        if (result.is_liked !== desired) item.likes_count = oldCount
+        return result
+      } catch (error) {
+        item.is_liked = wasLiked
+        item.likes_count = oldCount
+        throw error
+      }
+    })
+  } finally { likeBusy[item.id] = false }
 }
 
 onMounted(async () => {
   await loadLatest(true)
-  await loadLikesCount(true)
+  await loadLikesCount()
   if (auth.isLoggedIn) {
     await loadFollowing(true)
   }
 })
 
-watch(
-  () => auth.isLoggedIn,
-  async (v) => {
-    if (v && following.items.length === 0) {
-      await loadFollowing(true)
-    }
-  },
-)
+watch(() => auth.claims?.account_id ?? 0, (accountID) => {
+  followingGeneration += 1
+  following.items = []
+  following.loading = false
+  following.error = ''
+  following.has_more = false
+  following.next_time = 0
+  following.next_id = 0
+  if (accountID) void loadFollowing(true)
+}, { flush: 'sync' })
 </script>
 
 <template>
@@ -162,7 +175,7 @@ watch(
     <div class="grid two">
       <div class="card">
         <p class="title">Feed</p>
-        <p class="subtle">`/feed/listLatest` 与 `/feed/listLikesCount` 支持匿名（可选 JWT）；`/feed/listByFollowing` 需要 JWT。</p>
+        <p class="subtle">最新流和点赞榜支持匿名浏览，关注流需要登录。</p>
 
         <div class="card" style="margin-top: 12px">
           <div class="row" style="justify-content: space-between">
@@ -193,19 +206,19 @@ watch(
         <div class="card" style="margin-top: 12px">
           <div class="row" style="justify-content: space-between">
             <div>
-              <p class="title">点赞数流（listLikesCount）</p>
+              <p class="title">点赞榜</p>
               <div class="subtle">
-                limit：{{ likesCount.limit }} · next=(likes={{ likesCount.next_likes_count_before }}, id={{ likesCount.next_id_before }})
-                · has_more：{{ likesCount.has_more }}
+                显示数量：{{ likesCount.limit }}
               </div>
             </div>
             <div class="row">
               <label class="subtle" style="margin: 0">limit</label>
               <input v-model.number="likesCount.limit" type="number" min="1" max="50" style="width: 90px" />
-              <button class="primary" type="button" :disabled="likesCount.loading" @click="loadLikesCount(true)">刷新</button>
-              <button type="button" :disabled="likesCount.loading || !likesCount.has_more" @click="loadLikesCount(false)">
-                加载更多
-              </button>
+              <select v-model="likesCount.window" :disabled="likesCount.loading" aria-label="点赞榜时间范围">
+                <option value="24h">24 小时</option>
+                <option value="7d">7 天</option>
+              </select>
+              <button class="primary" type="button" :disabled="likesCount.loading" @click="loadLikesCount()">刷新</button>
             </div>
           </div>
           <div v-if="likesCount.error" class="pill bad" style="margin-top: 10px">错误：{{ likesCount.error }}</div>
@@ -224,9 +237,9 @@ watch(
         <div class="card" style="margin-top: 12px">
           <div class="row" style="justify-content: space-between">
             <div>
-              <p class="title">关注流（listByFollowing，JWT）</p>
+              <p class="title">关注流</p>
               <div class="subtle">
-                limit：{{ following.limit }} · next_time：{{ following.next_time }} · has_more：{{ following.has_more }}
+                limit：{{ following.limit }} · next=(time={{ following.next_time }}, id={{ following.next_id }}) · has_more：{{ following.has_more }}
               </div>
             </div>
             <div class="row">

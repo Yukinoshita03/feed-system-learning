@@ -1,16 +1,30 @@
-import { postJson } from './client'
+import { ApiError, postJson } from './client'
 import { normalizeVideoList } from './normalize'
 import type { Video } from './types'
 
-type FavoriteResult = { is_favorited: boolean; favorites_count: number }
+type FavoriteResult = { is_favorited: boolean; changed: boolean }
 type FavoritePage = { video_list: Video[]; next_id: number; has_more: boolean }
 
 export function favorite(videoId: number) {
-  return postJson<FavoriteResult>('/favorite/favorite', { video_id: videoId }, { authRequired: true })
+  return setFavorited(videoId, true)
 }
 
 export function unfavorite(videoId: number) {
-  return postJson<FavoriteResult>('/favorite/unfavorite', { video_id: videoId }, { authRequired: true })
+  return setFavorited(videoId, false)
+}
+
+async function setFavorited(videoId: number, desired: boolean): Promise<FavoriteResult> {
+  try {
+    return await postJson<FavoriteResult>(desired ? '/favorite/favorite' : '/favorite/unfavorite', { video_id: videoId }, { authRequired: true })
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status >= 500) {
+      try {
+        const current = await isFavorited(videoId)
+        if (current.is_favorited === desired) return { ...current, changed: false }
+      } catch { /* 保留原始请求错误。 */ }
+    }
+    throw error
+  }
 }
 
 export function isFavorited(videoId: number) {

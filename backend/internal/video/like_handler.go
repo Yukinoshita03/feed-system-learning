@@ -43,7 +43,7 @@ func (h *LikeHandler) setLiked(c *gin.Context, liked bool) {
 	if !liked {
 		message = "取消点赞成功"
 	}
-	c.JSON(http.StatusOK, gin.H{"message": message, "is_liked": result.IsLiked, "likes_count": result.LikesCount})
+	c.JSON(http.StatusOK, gin.H{"message": message, "is_liked": result.IsLiked, "changed": result.Changed})
 }
 
 // POST /like/isLiked：查询当前登录账号对该视频的点赞状态。

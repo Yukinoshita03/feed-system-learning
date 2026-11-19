@@ -331,6 +331,14 @@ func (c *Client) Consume(
 	channel *amqp.Channel,
 	consumerTag string,
 ) (<-chan amqp.Delivery, error) {
+	if c == nil {
+		return nil, fmt.Errorf("RabbitMQ 客户端未初始化")
+	}
+	return c.ConsumeQueue(ctx, channel, c.config.Queue, consumerTag, c.config.PrefetchCount)
+}
+
+// ConsumeQueue 让不同业务队列共享连接，同时独立使用 Channel 和流控参数。
+func (c *Client) ConsumeQueue(ctx context.Context, channel *amqp.Channel, queue, consumerTag string, prefetch int) (<-chan amqp.Delivery, error) {
 	if c == nil || channel == nil {
 		return nil, fmt.Errorf("RabbitMQ 客户端或 Channel 未初始化")
 	}
@@ -339,16 +347,16 @@ func (c *Client) Consume(
 		return nil, fmt.Errorf("RabbitMQ 连接已经关闭")
 	}
 
-	if c.config.Queue == "" {
+	if queue == "" {
 		return nil, fmt.Errorf("Queue 名称不能为空")
 	}
 
-	if c.config.PrefetchCount <= 0 {
+	if prefetch <= 0 {
 		return nil, fmt.Errorf("PrefetchCount 必须是正整数")
 	}
 
 	if err := channel.Qos(
-		c.config.PrefetchCount,
+		prefetch,
 		0,
 		false,
 	); err != nil {
@@ -357,17 +365,59 @@ func (c *Client) Consume(
 
 	deliveries, err := channel.ConsumeWithContext(
 		ctx,
-		c.config.Queue, // Queue
-		consumerTag,    // ConsumerTag
-		false,          // autoAck：关闭自动 ACK
-		false,          // exclusive：不独占队列
-		false,          // noLocal
-		false,          // noWait
-		nil,            // 额外参数
+		queue,       // Queue
+		consumerTag, // ConsumerTag
+		false,       // autoAck：关闭自动 ACK
+		false,       // exclusive：不独占队列
+		false,       // noLocal
+		false,       // noWait
+		nil,         // 额外参数
 	)
 	if err != nil {
 		return nil, fmt.Errorf("注册 RabbitMQ 消费者失败: %w", err)
 	}
 
 	return deliveries, nil
+}
+
+// SetupCounterTopology 独立声明计数队列；Single Active Consumer 保证多 API 实例下
+// 也只有一个活跃计数消费者，其余实例待命，不会无意放大同一计数行的并发写。
+func (c *Client) SetupCounterTopology() error {
+	channel, err := c.OpenChannel()
+	if err != nil {
+		return err
+	}
+	defer channel.Close()
+	if c.config.CounterQueue == "" || c.config.CounterDeadLetterQueue == "" {
+		return fmt.Errorf("计数队列与死信队列不能为空")
+	}
+	if err := c.DeclareExchange(channel); err != nil {
+		return err
+	}
+	if err := declareExchange(channel, c.config.DeadLetterExchange, "direct"); err != nil {
+		return err
+	}
+	if _, err := channel.QueueDeclare(c.config.CounterDeadLetterQueue, true, false, false, false, nil); err != nil {
+		return err
+	}
+	if err := channel.QueueBind(c.config.CounterDeadLetterQueue, "counter.dead", c.config.DeadLetterExchange, false, nil); err != nil {
+		return err
+	}
+	if _, err := channel.QueueDeclare(c.config.CounterQueue, true, false, false, false, amqp.Table{
+		"x-dead-letter-exchange":    c.config.DeadLetterExchange,
+		"x-dead-letter-routing-key": "counter.dead",
+		"x-single-active-consumer":  true,
+	}); err != nil {
+		return err
+	}
+	return channel.QueueBind(c.config.CounterQueue, "counter.#", c.config.Exchange, false, nil)
+}
+
+func (c *Client) ConsumeCounters(ctx context.Context, channel *amqp.Channel) (<-chan amqp.Delivery, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// CounterConsumer.Run 负责监听 ctx 并关闭自己的 Channel。不要同时触发
+	// ConsumeWithContext 的 Cancel RPC 和 Close RPC，以免同一 Channel 的响应竞争。
+	return c.ConsumeQueue(context.WithoutCancel(ctx), channel, c.config.CounterQueue, "", 100)
 }

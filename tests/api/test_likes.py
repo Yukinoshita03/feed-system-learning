@@ -50,7 +50,7 @@ def test_like_missing_video(api_base_url, http, like_video, endpoint):
 
 
 @allure.title("重复点赞和取消保持幂等，Feed 按用户返回点赞状态")
-def test_like_lifecycle_and_private_feed_state(api_base_url, http, like_video, create_account, login_account):
+def test_like_lifecycle_and_private_feed_state(api_base_url, http, like_video, create_account, login_account, await_video_counts):
     item, a = like_video
     other = login_account(create_account())
     b = {"Authorization": f"Bearer {other['token']}"}
@@ -58,15 +58,17 @@ def test_like_lifecycle_and_private_feed_state(api_base_url, http, like_video, c
     with allure.step("未点赞时重复取消，数量保持 0"):
         for _ in range(2):
             result = post(http, api_base_url, "/like/unlike", body, a)
-            assert result["is_liked"] is False and result["likes_count"] == 0
+            assert result["is_liked"] is False and result["changed"] is False
     with allure.step("重复点赞只计一次，首次点赞时间保持不变"):
-        for _ in range(2):
+        for attempt in range(2):
             result = post(http, api_base_url, "/like/like", {**body, "account_id": other["account_id"]}, a)
-            assert result["is_liked"] is True and result["likes_count"] == 1
+            assert result["is_liked"] is True and result["changed"] is (attempt == 0)
+            assert "likes_count" not in result
         assert post(http, api_base_url, "/like/isLiked", body, a) == {"is_liked": True}
         assert post(http, api_base_url, "/like/isLiked", {**body, "account_id": item["author_id"]}, b) == {"is_liked": False}
         assert post(http, api_base_url, "/like/listMyLikedVideos", {}, b) == []
         assert [video["id"] for video in post(http, api_base_url, "/like/listMyLikedVideos", {}, a)] == [item["id"]]
+    await_video_counts(item["id"], likes_count=1)
     with allure.step("同一公共 Feed 缓存对游客、点赞人和其他账号返回不同的个人状态"):
         for headers, liked in ((None, False), (a, True), (b, False), (None, False), (a, True)):
             page = post(http, api_base_url, "/feed/listLatest", {}, headers)
@@ -78,13 +80,16 @@ def test_like_lifecycle_and_private_feed_state(api_base_url, http, like_video, c
         assert detail["create_time"] == item["create_time"]
     with allure.step("第二个账号独立点赞；取消不影响其他账号的记录"):
         result = post(http, api_base_url, "/like/like", {**body, "account_id": item["author_id"]}, b)
-        assert result["likes_count"] == 2
-        for _ in range(2):
+        assert result["is_liked"] and result["changed"]
+        await_video_counts(item["id"], likes_count=2)
+        for attempt in range(2):
             result = post(http, api_base_url, "/like/unlike", body, a)
-            assert result["is_liked"] is False and result["likes_count"] == 1
+            assert result["is_liked"] is False and result["changed"] is (attempt == 0)
+        await_video_counts(item["id"], likes_count=1)
         assert post(http, api_base_url, "/like/isLiked", body, b)["is_liked"] is True
         result = post(http, api_base_url, "/like/unlike", body, b)
-        assert result["likes_count"] == 0
+        assert result["is_liked"] is False and result["changed"]
+        await_video_counts(item["id"], likes_count=0)
         assert post(http, api_base_url, "/like/listMyLikedVideos", {}, a) == []
         assert post(http, api_base_url, "/like/listMyLikedVideos", {}, b) == []
 
@@ -108,7 +113,7 @@ def test_liked_list_order_and_video_deletion(api_base_url, http, like_video):
         http.post(api_base_url + "/video/delete", json={"id": second["id"]}, headers=headers, timeout=10)
 
 
-def test_like_updates_detail_cache_without_caching_personal_state(api_base_url, http, like_video, redis_command):
+def test_like_updates_detail_cache_without_caching_personal_state(api_base_url, http, like_video, redis_command, await_video_counts):
     item, headers = like_video
     detail_key = f"video:detail:{item['id']}"
     author_key = f"video:author:{item['author_id']}"
@@ -118,18 +123,18 @@ def test_like_updates_detail_cache_without_caching_personal_state(api_base_url, 
     ids = redis_command("GET", "feed:latest:first:10")
     author_ids = redis_command("GET", author_key)
     post(http, api_base_url, "/like/like", {"video_id": item["id"]}, headers)
-    assert redis_command("GET", detail_key) is None
+    assert redis_command("GET", detail_key) is not None
     assert redis_command("GET", "feed:latest:first:10") == ids
     assert redis_command("GET", author_key) == author_ids
-    detail = post(http, api_base_url, "/video/getDetail", {"id": item["id"]})
+    detail = await_video_counts(item["id"], likes_count=1)
     assert detail["likes_count"] == 1
     cached = json.loads(redis_command("GET", detail_key))
-    assert cached["likes_count"] == 1 and "is_liked" not in cached
+    assert cached["likes_count"] == 0 and "is_liked" not in cached
     post(http, api_base_url, "/like/unlike", {"video_id": item["id"]}, headers)
-    assert post(http, api_base_url, "/video/getDetail", {"id": item["id"]})["likes_count"] == 0
+    await_video_counts(item["id"], likes_count=0)
 
 
-def test_concurrent_http_like_requests_are_idempotent(api_base_url, http, like_video):
+def test_concurrent_http_like_requests_are_idempotent(api_base_url, http, like_video, await_video_counts):
     item, headers = like_video
     def request(endpoint):
         response = requests.post(api_base_url + "/like/" + endpoint, json={"video_id": item["id"]}, headers=headers, timeout=15)
@@ -138,7 +143,9 @@ def test_concurrent_http_like_requests_are_idempotent(api_base_url, http, like_v
     for endpoint, count in (("like", 1), ("unlike", 0)):
         with ThreadPoolExecutor(max_workers=8) as workers:
             results = list(workers.map(request, [endpoint] * 16))
-        assert all(result["likes_count"] == count for result in results)
+        assert all(result["is_liked"] is bool(count) and "likes_count" not in result for result in results)
+        assert sum(result["changed"] for result in results) == 1
+        await_video_counts(item["id"], likes_count=count)
         assert post(http, api_base_url, "/video/getDetail", {"id": item["id"]})["likes_count"] == count
         assert post(http, api_base_url, "/like/isLiked", {"video_id": item["id"]}, headers)["is_liked"] is bool(count)
 

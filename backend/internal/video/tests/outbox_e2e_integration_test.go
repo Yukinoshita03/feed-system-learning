@@ -1,4 +1,6 @@
-package video
+package video_test
+
+import video "feed-system-learning/internal/video"
 
 import (
 	"context"
@@ -38,6 +40,10 @@ func TestCommentOutboxEndToEnd(t *testing.T) {
 	config.Exchange = "feed.e2e." + suffix
 	config.Queue = "feed.e2e.queue." + suffix
 	config.BindingKey = "notification.#"
+	config.CounterQueue = "feed.e2e.counter." + suffix
+	config.CounterDeadLetterQueue = config.CounterQueue + ".dlq"
+	config.DeadLetterExchange = "feed.e2e.dlx." + suffix
+	config.DeadLetterQueue = config.Queue + ".dlq"
 
 	client, err := mq.NewClient(config)
 	if err != nil {
@@ -46,6 +52,10 @@ func TestCommentOutboxEndToEnd(t *testing.T) {
 	t.Cleanup(func() {
 		if channel, err := client.OpenChannel(); err == nil {
 			_, _ = channel.QueueDelete(config.Queue, false, false, false)
+			_, _ = channel.QueueDelete(config.CounterQueue, false, false, false)
+			_, _ = channel.QueueDelete(config.CounterDeadLetterQueue, false, false, false)
+			_, _ = channel.QueueDelete(config.DeadLetterQueue, false, false, false)
+			_ = channel.ExchangeDelete(config.DeadLetterExchange, false, false)
 			_ = channel.ExchangeDelete(config.Exchange, false, false)
 			_ = channel.Close()
 		}
@@ -55,16 +65,20 @@ func TestCommentOutboxEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if err := client.SetupCounterTopology(); err != nil {
+		t.Fatal(err)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	repo := notification.NewRepository(f.db)
 
 	// ① 生产端：真实的评论事务，只应该写出 outbox。
-	comments := NewCommentRepository(f.db, f.videos)
-	if _, err := comments.Create(ctx, &Comment{VideoID: item.ID, AuthorID: actor, Content: "端到端验证"}); err != nil {
+	comments := video.NewCommentRepository(f.db, f.videos)
+	if err := comments.Create(ctx, &video.Comment{VideoID: item.ID, AuthorID: actor, Content: "端到端验证"}); err != nil {
 		t.Fatal(err)
 	}
-	var saved Comment
+	var saved video.Comment
 	if err := f.db.Where("video_id = ? AND author_id = ?", item.ID, actor).Take(&saved).Error; err != nil {
 		t.Fatal(err)
 	}

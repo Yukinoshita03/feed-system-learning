@@ -19,7 +19,7 @@ const auth = useAuthStore()
 const social = useSocialStore()
 const toast = useToastStore()
 
-const { tab, following, currentState, loadFollowing, ensureTabLoaded, loadMoreIfNeeded } = useVideoFeed()
+const { tab, currentState, loadFollowing, ensureTabLoaded, loadMoreIfNeeded } = useVideoFeed()
 const scroller = ref<HTMLDivElement | null>(null)
 const { muted, activeIndex, videoMap, setVideoRef, scrollToIndex, onScroll, playActive, toggleMute, togglePlayPause } = useVideoPlayer(scroller)
 
@@ -77,8 +77,8 @@ watch(() => filteredItems.value.length, (len) => {
   else if (activeIndex.value > len - 1) activeIndex.value = len - 1
 })
 
-watch(() => auth.isLoggedIn, async (v) => {
-  if (tab.value === 'following' && v && following.items.length === 0) await loadFollowing(true)
+watch(() => auth.claims?.account_id ?? 0, async () => {
+  if (tab.value === 'following') await loadFollowing(true)
 })
 
 async function onKeydown(e: KeyboardEvent) {

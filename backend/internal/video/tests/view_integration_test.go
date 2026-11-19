@@ -1,4 +1,6 @@
-package video
+package video_test
+
+import video "feed-system-learning/internal/video"
 
 import (
 	"context"
@@ -22,8 +24,8 @@ import (
 type viewFixture struct {
 	db     *gorm.DB
 	redis  *redis.Client
-	views  *ViewRepository
-	videos *VideoRepository
+	views  *video.ViewRepository
+	videos *video.VideoRepository
 	author uint
 }
 
@@ -44,7 +46,7 @@ func newViewFixture(t *testing.T) *viewFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	dbtest.Migrate(t, database, &account.Account{}, &Video{}, &Like{}, &Comment{}, &Favorite{}, &VideoView{})
+	dbtest.Migrate(t, database, &account.Account{}, &video.Video{}, &video.VideoCounter{}, &video.VideoCounterConsumption{}, &video.Like{}, &video.Comment{}, &video.Favorite{}, &video.VideoView{})
 
 	f := &viewFixture{db: database}
 	var dataCache *cache.Client
@@ -70,8 +72,8 @@ func newViewFixture(t *testing.T) *viewFixture {
 			t.Fatal(err)
 		}
 	}
-	f.videos = NewVideoRepository(database, dataCache)
-	f.views = NewViewRepository(database, f.videos)
+	f.videos = video.NewVideoRepository(database, dataCache)
+	f.views = video.NewViewRepository(database, f.videos)
 
 	author := account.Account{
 		Username: fmt.Sprintf("view_author_%d", time.Now().UnixNano()),
@@ -82,7 +84,7 @@ func newViewFixture(t *testing.T) *viewFixture {
 	}
 	f.author = author.ID
 	t.Cleanup(func() {
-		if err := database.Where("author_id = ?", author.ID).Delete(&Video{}).Error; err != nil {
+		if err := database.Where("author_id = ?", author.ID).Delete(&video.Video{}).Error; err != nil {
 			t.Error(err)
 		}
 		if err := database.Delete(&author).Error; err != nil {
@@ -92,17 +94,17 @@ func newViewFixture(t *testing.T) *viewFixture {
 	return f
 }
 
-func (f *viewFixture) publish(t *testing.T) Video {
+func (f *viewFixture) publish(t *testing.T) video.Video {
 	t.Helper()
-	item := Video{AuthorID: f.author, Title: "view-test", PlayURL: "/static/v.mp4", CoverURL: "/static/v.png"}
+	item := video.Video{AuthorID: f.author, Title: "view-test", PlayURL: "/static/v.mp4", CoverURL: "/static/v.png"}
 	if err := f.videos.CreateVideo(context.Background(), &item); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if err := f.db.Where("video_id = ?", item.ID).Delete(&VideoView{}).Error; err != nil {
+		if err := f.db.Where("video_id = ?", item.ID).Delete(&video.VideoView{}).Error; err != nil {
 			t.Error(err)
 		}
-		if err := f.db.Unscoped().Where("id = ?", item.ID).Delete(&Video{}).Error; err != nil {
+		if err := f.db.Unscoped().Where("id = ?", item.ID).Delete(&video.Video{}).Error; err != nil {
 			t.Error(err)
 		}
 	})
@@ -113,7 +115,7 @@ func (f *viewFixture) publish(t *testing.T) Video {
 func (f *viewFixture) viewRows(t *testing.T, videoID uint) int64 {
 	t.Helper()
 	var count int64
-	if err := f.db.Model(&VideoView{}).Where("video_id = ?", videoID).Count(&count).Error; err != nil {
+	if err := f.db.Model(&video.VideoView{}).Where("video_id = ?", videoID).Count(&count).Error; err != nil {
 		t.Fatal(err)
 	}
 	return count
@@ -121,10 +123,10 @@ func (f *viewFixture) viewRows(t *testing.T, videoID uint) int64 {
 
 func (f *viewFixture) counts(t *testing.T, videoID uint) (views int64, counter int64) {
 	t.Helper()
-	if err := f.db.Model(&VideoView{}).Where("video_id = ?", videoID).Count(&views).Error; err != nil {
+	if err := f.db.Model(&video.VideoView{}).Where("video_id = ?", videoID).Count(&views).Error; err != nil {
 		t.Fatal(err)
 	}
-	var item Video
+	var item video.Video
 	if err := f.db.Select("view_count").First(&item, videoID).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +235,7 @@ func TestViewDeleteVideoRemovesViews(t *testing.T) {
 	}
 
 	var remaining int64
-	if err := f.db.Model(&VideoView{}).Where("video_id = ?", item.ID).Count(&remaining).Error; err != nil {
+	if err := f.db.Model(&video.VideoView{}).Where("video_id = ?", item.ID).Count(&remaining).Error; err != nil {
 		t.Fatal(err)
 	}
 	if remaining != 0 {
@@ -252,7 +254,7 @@ func TestViewCleanOrphans(t *testing.T) {
 
 	// 直接删表里的视频行，模拟"删除时播放并发交错"留下的孤儿。
 	// 这里只数明细表，不查 videos：视频行已经不存在了。
-	if err := f.db.Unscoped().Delete(&Video{}, item.ID).Error; err != nil {
+	if err := f.db.Unscoped().Delete(&video.Video{}, item.ID).Error; err != nil {
 		t.Fatal(err)
 	}
 	if views := f.viewRows(t, item.ID); views != 1 {

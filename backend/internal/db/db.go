@@ -28,6 +28,8 @@ func AutoMigrate(database *gorm.DB) error {
 	return database.AutoMigrate(
 		&account.Account{},
 		&video.Video{},
+		&video.VideoCounter{},
+		&video.VideoCounterConsumption{},
 		&video.Like{},
 		&video.Comment{},
 		&video.Favorite{},

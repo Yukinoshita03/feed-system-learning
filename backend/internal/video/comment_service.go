@@ -13,14 +13,14 @@ type CommentService struct{ repo *CommentRepository }
 
 func NewCommentService(repo *CommentRepository) *CommentService { return &CommentService{repo: repo} }
 
-func (s *CommentService) Publish(ctx context.Context, authorID uint, req PublishCommentRequest) (*Comment, int64, error) {
+func (s *CommentService) Publish(ctx context.Context, authorID uint, req PublishCommentRequest) (*Comment, error) {
 	content := strings.TrimSpace(req.Content)
 	if authorID == 0 || req.VideoID == 0 || content == "" || utf8.RuneCountInString(content) > 1000 {
-		return nil, 0, ErrInvalidComment
+		return nil, ErrInvalidComment
 	}
 	item := &Comment{VideoID: req.VideoID, AuthorID: authorID, Content: content}
-	count, err := s.repo.Create(ctx, item)
-	return item, count, err
+	err := s.repo.Create(ctx, item)
+	return item, err
 }
 
 func (s *CommentService) List(ctx context.Context, req ListCommentsRequest) (CommentPage, error) {
@@ -45,9 +45,9 @@ func (s *CommentService) List(ctx context.Context, req ListCommentsRequest) (Com
 	return page, nil
 }
 
-func (s *CommentService) Delete(ctx context.Context, commentID, authorID uint) (int64, error) {
+func (s *CommentService) Delete(ctx context.Context, commentID, authorID uint) (bool, error) {
 	if commentID == 0 || authorID == 0 {
-		return 0, ErrInvalidComment
+		return false, ErrInvalidComment
 	}
 	return s.repo.Delete(ctx, commentID, authorID)
 }

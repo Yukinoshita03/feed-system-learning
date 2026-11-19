@@ -25,7 +25,7 @@ def comment_context(api_base_url, http, create_account, login_account):
     http.post(api_base_url + "/video/delete", json={"id": video["id"]}, headers=headers, timeout=10)
 
 
-def test_comment_lifecycle_permissions_and_cache(api_base_url, http, comment_context, redis_command):
+def test_comment_lifecycle_permissions_and_cache(api_base_url, http, comment_context, redis_command, await_video_counts):
     video, owner, headers, _, other_headers = comment_context
     body = {"video_id": video["id"]}
     assert call(http, api_base_url, "/comment/list", body)["comments"] == []
@@ -35,15 +35,17 @@ def test_comment_lifecycle_permissions_and_cache(api_base_url, http, comment_con
     }, headers, 201)
     comment = response["comment"]
     assert comment["content"] == "真实评论" and comment["author_id"] == owner["account_id"]
-    assert response["comments_count"] == 1
-    assert redis_command("GET", f"video:detail:{video['id']}") is None
+    assert "comments_count" not in response
+    await_video_counts(video["id"], comments_count=1)
+    assert redis_command("GET", f"video:detail:{video['id']}") is not None
     listed = call(http, api_base_url, "/comment/list", body)
     assert listed["comments"][0]["username"] == owner["username"]
     assert not ({"password", "access_token_hash"} & listed["comments"][0].keys())
     call(http, api_base_url, "/comment/delete", {"comment_id": comment["id"]}, other_headers, 403)
     assert call(http, api_base_url, "/video/getDetail", {"id": video["id"]})["comments_count"] == 1
     assert call(http, api_base_url, "/comment/listAll", body)[0]["id"] == comment["id"]
-    assert call(http, api_base_url, "/comment/delete", {"comment_id": comment["id"]}, headers)["comments_count"] == 0
+    assert call(http, api_base_url, "/comment/delete", {"comment_id": comment["id"]}, headers)["changed"] is True
+    await_video_counts(video["id"], comments_count=0)
     call(http, api_base_url, "/comment/delete", {"comment_id": comment["id"]}, headers, 404)
     assert call(http, api_base_url, "/comment/list", body)["comments"] == []
     assert call(http, api_base_url, "/video/getDetail", {"id": video["id"]})["comments_count"] == 0
@@ -84,14 +86,14 @@ def test_invalid_comment_page(api_base_url, http, comment_context, extra):
     call(http, api_base_url, "/comment/list", {"video_id": video["id"], **extra}, status=400)
 
 
-def test_concurrent_comments_count_and_deleted_video(api_base_url, http, comment_context):
+def test_concurrent_comments_count_and_deleted_video(api_base_url, http, comment_context, await_video_counts):
     video, _, headers, _, _ = comment_context
     def publish(i):
         return call(requests, api_base_url, "/comment/publish", {"video_id": video["id"], "content": str(i)}, headers, 201)
     with ThreadPoolExecutor(max_workers=6) as pool:
         results = list(pool.map(publish, range(12)))
     assert len({r["comment"]["id"] for r in results}) == 12
-    assert call(http, api_base_url, "/video/getDetail", {"id": video["id"]})["comments_count"] == 12
+    await_video_counts(video["id"], comments_count=12)
     call(http, api_base_url, "/video/delete", {"id": video["id"]}, headers)
     call(http, api_base_url, "/comment/list", {"video_id": video["id"]}, status=404)
     call(http, api_base_url, "/comment/publish", {"video_id": video["id"], "content": "已删除"}, headers, 404)

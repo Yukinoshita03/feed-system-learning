@@ -62,6 +62,9 @@ func main() {
 	if err := mqClient.SetupTopology(); err != nil {
 		log.Fatal("初始化 RabbitMQ 拓扑失败：", err)
 	}
+	if err := mqClient.SetupCounterTopology(); err != nil {
+		log.Fatal("初始化计数队列失败：", err)
+	}
 	log.Printf("RabbitMQ 已连接，拓扑就绪：exchange=%s queue=%s", mqConfig.Exchange, mqConfig.Queue)
 
 	mydb, err := db.NewDB(dsn)
@@ -69,6 +72,9 @@ func main() {
 		log.Fatal(err)
 	}
 	if err := db.AutoMigrate(mydb); err != nil {
+		log.Fatal(err)
+	}
+	if err := video.NewCounterRepository(mydb).CheckReady(context.Background()); err != nil {
 		log.Fatal(err)
 	}
 	redisClient := db.NewRedis(&redis.Options{
@@ -98,6 +104,7 @@ func main() {
 	defer stopWorkers()
 
 	notificationConsumer := notification.NewConsumer(notificationRepo, mqClient)
+	go video.NewCounterConsumer(video.NewCounterRepository(mydb), mqClient).RunForever(workerCtx)
 	for i := 0; i < 10; i++ {
 		go notificationConsumer.RunForever(workerCtx, fmt.Sprintf("worker-%d", i))
 	}
@@ -185,21 +192,7 @@ func main() {
 	}()
 
 	notificationPublisher := notification.NewOutboxPublisher(notificationRepo, mqClient)
-	go func() {
-		ticker := time.NewTicker(200 * time.Millisecond)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-workerCtx.Done():
-				return
-			case <-ticker.C:
-				if err := notificationPublisher.PublishBatch(workerCtx, 100); err != nil {
-					log.Printf("发布通知 outbox 失败：%v", err)
-				}
-			}
-		}
-	}()
+	go notificationPublisher.RunForever(workerCtx)
 
 	tokens, temporary, err := auth.NewTokenManager(os.Getenv("JWT_SECRET"), accessTokenTTL)
 	if err != nil {

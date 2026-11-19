@@ -14,7 +14,7 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
 @allure.feature("Selenium 页面测试")
 @allure.title("首页点赞、刷新保持红心、查看我赞过的视频、详情页取消点赞")
-def test_like_persists_between_home_detail_and_account(browser, wait, web_base_url, http, api_base_url, ui_account, login_ui, create_account, login_account):
+def test_like_persists_between_home_detail_and_account(browser, wait, web_base_url, http, api_base_url, ui_account, login_ui, create_account, login_account, await_video_counts):
     owner = login_account(create_account())
     headers = {"Authorization": "Bearer " + owner["token"]}
     media = {}
@@ -42,6 +42,7 @@ def test_like_persists_between_home_detail_and_account(browser, wait, web_base_u
             wait.until(state(home_heart, False, 0))
             browser.find_element(*home_heart).click()
             wait.until(state(home_heart, True, 1))
+        await_video_counts(item["id"], likes_count=1)
         with allure.step("刷新首页，红心和计数从后端恢复"):
             browser.refresh()
             wait.until(EC.text_to_be_present_in_element((By.CSS_SELECTOR, ".slide.active .title"), title))
@@ -56,6 +57,7 @@ def test_like_persists_between_home_detail_and_account(browser, wait, web_base_u
         with allure.step("详情页取消点赞，刷新后维持未点赞与计数 0"):
             browser.find_element(*detail_heart).click()
             wait.until(state(detail_heart, False, 0))
+            await_video_counts(item["id"], likes_count=0)
             browser.refresh()
             wait.until(state(detail_heart, False, 0))
             screenshot = browser.get_screenshot_as_png()

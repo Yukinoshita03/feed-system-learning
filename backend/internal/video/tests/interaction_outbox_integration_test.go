@@ -1,4 +1,6 @@
-package video
+package video_test
+
+import video "feed-system-learning/internal/video"
 
 import (
 	"context"
@@ -15,24 +17,21 @@ func TestCommentPublishesOutboxEvent(t *testing.T) {
 	f := newLikeFixture(t)
 	t.Cleanup(cleanupInteractions(t, f))
 	item := f.publish(t)
-	comments := NewCommentRepository(f.db, f.videos)
+	comments := video.NewCommentRepository(f.db, f.videos)
 	actor := f.accounts[1].ID
 	ctx := context.Background()
 
-	count, err := comments.Create(ctx, &Comment{VideoID: item.ID, AuthorID: actor, Content: "第一条评论"})
+	err := comments.Create(ctx, &video.Comment{VideoID: item.ID, AuthorID: actor, Content: "第一条评论"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 1 {
-		t.Fatalf("comments_count=%d, want=1", count)
-	}
 
-	var saved Comment
+	var saved video.Comment
 	if err := f.db.Where("video_id = ? AND author_id = ?", item.ID, actor).Take(&saved).Error; err != nil {
 		t.Fatal(err)
 	}
 
-	messages := f.outboxForVideo(t, item.ID)
+	messages := f.notificationOutboxForVideo(t, item.ID)
 	if len(messages) != 1 {
 		t.Fatalf("outbox rows=%d, want=1", len(messages))
 	}
@@ -66,7 +65,7 @@ func TestFavoritePublishesOutboxEvent(t *testing.T) {
 	f := newLikeFixture(t)
 	t.Cleanup(cleanupInteractions(t, f))
 	item := f.publish(t)
-	favorites := NewFavoriteRepository(f.db, f.videos)
+	favorites := video.NewFavoriteRepository(f.db, f.videos)
 	actor := f.accounts[1].ID
 	ctx := context.Background()
 
@@ -74,12 +73,12 @@ func TestFavoritePublishesOutboxEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var saved Favorite
+	var saved video.Favorite
 	if err := f.db.Where("video_id = ? AND account_id = ?", item.ID, actor).Take(&saved).Error; err != nil {
 		t.Fatal(err)
 	}
 
-	messages := f.outboxForVideo(t, item.ID)
+	messages := f.notificationOutboxForVideo(t, item.ID)
 	if len(messages) != 1 {
 		t.Fatalf("outbox rows=%d, want=1", len(messages))
 	}
@@ -116,7 +115,7 @@ func TestFavoritePublishesOutboxEvent(t *testing.T) {
 	if _, err := favorites.SetFavorited(ctx, item.ID, actor, true); err != nil {
 		t.Fatal(err)
 	}
-	if got := len(f.outboxForVideo(t, item.ID)); got != 2 {
+	if got := len(f.notificationOutboxForVideo(t, item.ID)); got != 2 {
 		t.Fatalf("outbox rows after re-favorite=%d, want=2", got)
 	}
 }
@@ -126,19 +125,19 @@ func TestSelfInteractionSkipsOutbox(t *testing.T) {
 	f := newLikeFixture(t)
 	t.Cleanup(cleanupInteractions(t, f))
 	item := f.publish(t)
-	comments := NewCommentRepository(f.db, f.videos)
-	favorites := NewFavoriteRepository(f.db, f.videos)
+	comments := video.NewCommentRepository(f.db, f.videos)
+	favorites := video.NewFavoriteRepository(f.db, f.videos)
 	author := item.AuthorID
 	ctx := context.Background()
 
-	if _, err := comments.Create(ctx, &Comment{VideoID: item.ID, AuthorID: author, Content: "自己评论自己"}); err != nil {
+	if err := comments.Create(ctx, &video.Comment{VideoID: item.ID, AuthorID: author, Content: "自己评论自己"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := favorites.SetFavorited(ctx, item.ID, author, true); err != nil {
 		t.Fatal(err)
 	}
 
-	if messages := f.outboxForVideo(t, item.ID); len(messages) != 0 {
+	if messages := f.notificationOutboxForVideo(t, item.ID); len(messages) != 0 {
 		t.Fatalf("outbox rows=%d, want=0（自己操作自己的视频不该发通知）", len(messages))
 	}
 	if got := f.countNotificationsFor(t, item.ID); got != 0 {
@@ -146,11 +145,12 @@ func TestSelfInteractionSkipsOutbox(t *testing.T) {
 	}
 }
 
-func (f *likeFixture) outboxForVideo(t *testing.T, videoID uint) []notification.OutboxMessage {
+func (f *likeFixture) notificationOutboxForVideo(t *testing.T, videoID uint) []notification.OutboxMessage {
 	t.Helper()
 	messages := make([]notification.OutboxMessage, 0, 1)
 	if err := f.db.Model(&notification.OutboxMessage{}).
 		Where("JSON_EXTRACT(payload, '$.video_id') = ?", videoID).
+		Where("event_type <> ?", video.CounterEventType).
 		Order("id ASC").
 		Find(&messages).Error; err != nil {
 		t.Fatal(err)
@@ -180,10 +180,10 @@ func cleanupInteractions(t *testing.T, f *likeFixture) func() {
 		if len(videoIDs) == 0 {
 			return
 		}
-		if err := f.db.Where("video_id IN ?", videoIDs).Delete(&Comment{}).Error; err != nil {
+		if err := f.db.Where("video_id IN ?", videoIDs).Delete(&video.Comment{}).Error; err != nil {
 			t.Error(err)
 		}
-		if err := f.db.Where("video_id IN ?", videoIDs).Delete(&Favorite{}).Error; err != nil {
+		if err := f.db.Where("video_id IN ?", videoIDs).Delete(&video.Favorite{}).Error; err != nil {
 			t.Error(err)
 		}
 		if err := f.db.Where("JSON_EXTRACT(payload, '$.video_id') IN ?", videoIDs).

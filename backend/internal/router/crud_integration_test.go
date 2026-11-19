@@ -50,11 +50,14 @@ func newCRUDFixture(t *testing.T) *crudFixture {
 		t.Fatal(err)
 	}
 	f.item = video.Video{AuthorID: f.users[0].ID, Title: "CRUD transaction", PlayURL: "/static/test.mp4", CoverURL: "/static/test.png"}
-	if err := database.Create(&f.item).Error; err != nil {
+	if err := f.videos.CreateVideo(context.Background(), &f.item); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		ids := []uint{f.users[0].ID, f.users[1].ID}
+		if err := database.Where("JSON_EXTRACT(payload, '$.video_id') = ? OR JSON_EXTRACT(payload, '$.actor_id') IN ?", f.item.ID, ids).Delete(&notification.OutboxMessage{}).Error; err != nil {
+			t.Error(err)
+		}
 		for _, entity := range []any{&video.Like{}, &video.Favorite{}, &video.Comment{}} {
 			if err := database.Where("video_id = ?", f.item.ID).Delete(entity).Error; err != nil {
 				t.Error(err)
@@ -99,23 +102,23 @@ func (f *crudFixture) assertVideoCounts(t *testing.T, comments, favorites, likes
 	}
 }
 
-func TestCRUDCommentAndFavoriteRollbackOnCounterFailure(t *testing.T) {
+func TestCRUDCommentAndFavoriteRollbackOnOutboxFailure(t *testing.T) {
 	for _, kind := range []string{"comment", "favorite"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newCRUDFixture(t)
 			errInjected := errors.New("injected video counter failure")
 			name := "crud:fail-counter"
-			if err := f.db.Callback().Update().Before("gorm:update").Register(name, func(tx *gorm.DB) {
-				if tx.Statement.Table == "videos" {
+			if err := f.db.Callback().Create().Before("gorm:create").Register(name, func(tx *gorm.DB) {
+				if tx.Statement.Table == "notification_outbox" {
 					tx.AddError(errInjected)
 				}
 			}); err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { _ = f.db.Callback().Update().Remove(name) })
+			t.Cleanup(func() { _ = f.db.Callback().Create().Remove(name) })
 			var err error
 			if kind == "comment" {
-				_, err = video.NewCommentRepository(f.db, f.videos).Create(context.Background(), &video.Comment{VideoID: f.item.ID, AuthorID: f.users[1].ID, Content: "rollback"})
+				err = video.NewCommentRepository(f.db, f.videos).Create(context.Background(), &video.Comment{VideoID: f.item.ID, AuthorID: f.users[1].ID, Content: "rollback"})
 			} else {
 				_, err = video.NewFavoriteRepository(f.db, f.videos).SetFavorited(context.Background(), f.item.ID, f.users[1].ID, true)
 			}
@@ -157,7 +160,7 @@ func TestCRUDNotificationWriteFailureRollsBackAllBusinessKinds(t *testing.T) {
 			case "favorite":
 				_, err = video.NewFavoriteRepository(f.db, f.videos).SetFavorited(ctx, f.item.ID, f.users[1].ID, true)
 			case "comment":
-				_, err = video.NewCommentRepository(f.db, f.videos).Create(ctx, &video.Comment{VideoID: f.item.ID, AuthorID: f.users[1].ID, Content: "rollback notification"})
+				err = video.NewCommentRepository(f.db, f.videos).Create(ctx, &video.Comment{VideoID: f.item.ID, AuthorID: f.users[1].ID, Content: "rollback notification"})
 			case "follow":
 				_, err = social.NewRepository(f.db).SetFollowing(ctx, f.users[1].ID, f.users[0].ID, true)
 			}
@@ -189,7 +192,7 @@ func TestCRUDDeleteVideoCleansAllInteractionRows(t *testing.T) {
 	if _, err := video.NewFavoriteRepository(f.db, f.videos).SetFavorited(ctx, f.item.ID, f.users[1].ID, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := video.NewCommentRepository(f.db, f.videos).Create(ctx, &video.Comment{VideoID: f.item.ID, AuthorID: f.users[1].ID, Content: "delete cleanup"}); err != nil {
+	if err := video.NewCommentRepository(f.db, f.videos).Create(ctx, &video.Comment{VideoID: f.item.ID, AuthorID: f.users[1].ID, Content: "delete cleanup"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.videos.DeleteVideo(ctx, f.item.ID, f.users[0].ID); err != nil {

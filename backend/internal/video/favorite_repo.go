@@ -3,14 +3,11 @@ package video
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 
-	"feed-system-learning/internal/cache"
 	"feed-system-learning/internal/notification"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type FavoriteRepository struct {
@@ -22,26 +19,24 @@ func NewFavoriteRepository(db *gorm.DB, videos *VideoRepository) *FavoriteReposi
 	return &FavoriteRepository{db: db, videos: videos}
 }
 
-// SetFavorited 先锁定视频行，关系和收藏数在同一个事务里修改。
+// SetFavorited 只同步写收藏事实和 Outbox，不锁视频行或更新展示计数。
 func (r *FavoriteRepository) SetFavorited(ctx context.Context, videoID, accountID uint, active bool) (FavoriteResult, error) {
 	var result FavoriteResult
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var current Video
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, videoID).Error; err != nil {
+		if err := tx.Select("id", "author_id").First(&current, videoID).Error; err != nil {
 			return err
 		}
-		var existing Favorite
-		err := tx.Where("video_id = ? AND account_id = ?", videoID, accountID).Take(&existing).Error
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-		exists := err == nil
-		if active && !exists {
-			existing = Favorite{VideoID: videoID, AccountID: accountID}
+		result = FavoriteResult{IsFavorited: active}
+		if active {
+			existing := Favorite{VideoID: videoID, AccountID: accountID}
 			if err := tx.Create(&existing).Error; err != nil {
-				return err
+				if duplicateKey(err, "uq_favorite_video_account") {
+					return nil
+				}
+				return interactionError(err)
 			}
-			if err := tx.Model(&Video{}).Where("id = ?", videoID).UpdateColumn("favorites_count", gorm.Expr("favorites_count + 1")).Error; err != nil {
+			if err := recordCounterDelta(tx, videoID, KindFavorite, 1); err != nil {
 				return err
 			}
 			// 只写 outbox，通知由 Consumer 异步落库；自己收藏自己的视频不通知。
@@ -64,22 +59,21 @@ func (r *FavoriteRepository) SetFavorited(ctx context.Context, videoID, accountI
 					return err
 				}
 			}
-			current.FavoritesCount++
-		} else if !active && exists {
-			if err := tx.Delete(&existing).Error; err != nil {
-				return err
+			result.Changed = true
+		} else {
+			deleted := tx.Where("video_id = ? AND account_id = ?", videoID, accountID).Delete(&Favorite{})
+			if deleted.Error != nil {
+				return deleted.Error
 			}
-			if err := tx.Model(&Video{}).Where("id = ?", videoID).UpdateColumn("favorites_count", gorm.Expr("GREATEST(favorites_count - 1, 0)")).Error; err != nil {
-				return err
+			if deleted.RowsAffected > 0 {
+				if err := recordCounterDelta(tx, videoID, KindFavorite, -1); err != nil {
+					return err
+				}
+				result.Changed = true
 			}
-			current.FavoritesCount = max(0, current.FavoritesCount-1)
 		}
-		result = FavoriteResult{IsFavorited: active, FavoritesCount: current.FavoritesCount}
 		return nil
 	})
-	if err == nil {
-		r.videos.invalidate(ctx, cache.VideoKey(videoID))
-	}
 	return result, err
 }
 

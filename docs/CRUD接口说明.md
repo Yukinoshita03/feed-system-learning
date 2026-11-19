@@ -8,12 +8,12 @@
 
 | POST 路径 | 请求 JSON | 登录 | 响应 |
 |---|---|---|---|
-| `/comment/publish` | `{"video_id":1,"content":"一条评论"}` | 必须 | `comment`、`comments_count`，状态码 201 |
+| `/comment/publish` | `{"video_id":1,"content":"一条评论"}` | 必须 | `comment`，状态码 201；正文已提交，计数异步更新 |
 | `/comment/list` | `{"video_id":1,"limit":20,"before_id":0}` | 可不登录 | `comments`、`next_id`、`has_more` |
 | `/comment/listAll` | 同上 | 可不登录 | 单页评论数组，兼容原页面 |
-| `/comment/delete` | `{"comment_id":1}` | 必须 | 删除后的 `comments_count` |
+| `/comment/delete` | `{"comment_id":1}` | 必须 | `changed`，表示正文实际删除成功 |
 
-正文去除首尾空白后要求 1～1000 个字符。只能删除自己的评论（越权 403）；视频或评论不存在返回 404。发布和删除在事务中锁定视频、修改评论并同步评论数，提交后使视频详情缓存失效。删除视频会同时清理评论。
+正文去除首尾空白后要求 1～1000 个字符。只能删除自己的评论（越权 403）；视频或评论不存在返回 404。发布和删除在事务中保存正文变更及计数 Outbox，不拿视频排他锁；后台更新 `video_counters`。删除视频会同时清理评论。
 
 ## 收藏
 
@@ -21,12 +21,12 @@
 
 | POST 路径 | 请求 JSON | 响应 |
 |---|---|---|
-| `/favorite/favorite` | `{"video_id":1}` | `is_favorited`、`favorites_count` |
+| `/favorite/favorite` | `{"video_id":1}` | `is_favorited`、`changed` |
 | `/favorite/unfavorite` | `{"video_id":1}` | 同上 |
 | `/favorite/isFavorited` | `{"video_id":1}` | `is_favorited` |
 | `/favorite/listMyFavorites` | `{"limit":20,"before_id":0}` | `video_list`、`next_id`、`has_more` |
 
-列表按收藏记录 ID 倒序，游标是收藏关系 ID，视频字段 `id` 仍为视频 ID。重复操作不改变计数；列表只属于当前登录账号。计数修改后清除视频详情缓存；删除视频同步清理收藏关系。当前列表直接查 MySQL，不把个人收藏状态写进公共缓存。
+列表按收藏记录 ID 倒序，游标是收藏关系 ID，视频字段 `id` 仍为视频 ID。重复操作不改变计数；列表只属于当前登录账号。计数通过独立队列异步更新，不清除视频资料缓存；删除视频同步清理收藏关系。当前列表直接查 MySQL，不把个人收藏状态写进公共缓存。
 
 ## 关注
 
@@ -55,7 +55,7 @@
 | `/notification/markRead` | `{"message_ids":[1,2]}` 或 `{"all":true}` | `updated_count`，实际从未读变为已读的条数 |
 | `/notification/delete` | `{"message_id":1}` | 删除成功提示 |
 
-点赞、收藏、评论和关注的新增操作在同一个 MySQL 事务中写入通知。通知记录失败会回滚业务记录和计数。唯一事件键由操作类型和业务记录 ID 组成；重复点赞/收藏/关注不重复发通知，取消后再次操作会生成新通知。自己的互动不通知自己。评论正文作为通知内容，其余类型使用固定提示。
+点赞、收藏、评论和关注的新增操作在同一个 MySQL 事务中写入通知 Outbox；通知消费者异步创建通知。Outbox 写入失败会回滚业务。点赞、收藏、评论另有独立计数事件，取消操作和自己的互动也会生成计数增量，但不发送通知。唯一事件键由操作类型和业务记录 ID 组成；重复点赞/收藏/关注不重复发通知，取消后再次操作会生成新通知。自己的互动不通知自己。评论通知使用“评论了你的视频”的固定提示。
 
 通知没有对普通客户端开放“创建”接口。标记已读最多传 100 个 ID，空数组不会隐式标记全部；全量标记须显式传 `all=true`。操作其他人的 ID 不会改动其他人的通知；越权删除统一返回 404。
 
@@ -63,6 +63,8 @@
 
 ## 数据表与一致性
 
-启动时 `AutoMigrate` 增加 `comments`、`favorites`、`follows`、`notifications`，并为视频增加 `comments_count`、`favorites_count`。视频删除先锁视频，再清理点赞、评论、收藏记录。所有相关写接口都使用一致的锁顺序；公共视频缓存只保存公共资料和计数，个人状态单独查询。
+启动会迁移业务、Outbox、`video_counters` 和 `video_counter_consumptions` 表。三类互动同步提交业务事实和计数事件；计数消费者在事务里按事件 ID 去重、合并增量、更新独立计数表，提交后 ACK。视频详情和各列表整页批量读取计数，个人互动状态继续查询事实关系。
 
-这些模块按当前应用结构接入，没有依赖 GCFeed 的 RabbitMQ、推荐或审核模块。关注流、热榜、异步消息分发和私信在后续阶段实现。
+点赞接口响应为 `message`、`is_liked`、`changed`，收藏为 `is_favorited`、`changed`；写接口不再返回同步总计数。前端点击后本地加减一次，成功只确认状态，确定失败回滚。列表与详情的计数允许短暂滞后。
+
+视频与点赞、收藏、评论、计数表之间有真实外键，删除视频会清理关联数据；消费端不会为已删除视频重建计数。存量库必须先停写并执行 `go run ./cmd/migrate-counters -offline`，未初始化投影时服务拒绝启动。详细拓扑、迁移、重试和测试说明见 [异步互动计数设计](异步互动计数设计.md)。

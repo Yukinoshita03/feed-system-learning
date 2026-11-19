@@ -23,9 +23,14 @@ func NewVideoRepository(db *gorm.DB, cacheClient *cache.Client) *VideoRepository
 
 // CreateVideo 新增一条视频；生成的主键会回填到 video.ID。
 func (r *VideoRepository) CreateVideo(ctx context.Context, video *Video) error {
-	result := r.db.WithContext(ctx).Create(video)
-	if result.Error != nil {
-		return result.Error
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(video).Error; err != nil {
+			return err
+		}
+		return tx.Create(&VideoCounter{VideoID: video.ID}).Error
+	})
+	if err != nil {
+		return err
 	}
 	r.invalidate(ctx, cache.VideoKey(video.ID), cache.AuthorVideosKey(video.AuthorID), cache.LatestFeedKey)
 	return nil
@@ -39,6 +44,9 @@ func (r *VideoRepository) GetByID(ctx context.Context, id uint) (*Video, error) 
 	}
 	if len(videos) == 0 {
 		return nil, gorm.ErrRecordNotFound
+	}
+	if err := r.FillCounters(ctx, videos); err != nil {
+		return nil, err
 	}
 	return &videos[0], nil
 }
@@ -132,7 +140,7 @@ func (r *VideoRepository) ListByAuthorID(ctx context.Context, authorID uint) ([]
 			valid = valid && item.AuthorID == authorID
 		}
 		if valid {
-			return videos, nil
+			return videos, r.FillCounters(ctx, videos)
 		}
 	}
 	videos := make([]Video, 0)
@@ -147,7 +155,12 @@ func (r *VideoRepository) ListByAuthorID(ctx context.Context, authorID uint) ([]
 	if r.cache != nil {
 		r.cache.Store(ctx, entry, r.cache.Config().AuthorTTL, IDs(videos))
 	}
-	return videos, nil
+	return videos, r.FillCounters(ctx, videos)
+}
+
+// FillCounters 按整页批量补充计数，避免元数据缓存保存的旧值进入响应。
+func (r *VideoRepository) FillCounters(ctx context.Context, videos []Video) error {
+	return NewCounterRepository(r.db).Fill(ctx, videos)
 }
 
 // UpdateVideo 仅更新可编辑字段，并在 SQL 中同时限制视频 ID 和作者 ID。
@@ -195,6 +208,9 @@ func (r *VideoRepository) DeleteVideo(ctx context.Context, id, authorID uint) er
 		}
 		// 播放明细同样按视频清理，避免删除后留下孤儿记录。
 		if err := tx.Where("video_id = ?", id).Delete(&VideoView{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("video_id = ?", id).Delete(&VideoCounter{}).Error; err != nil {
 			return err
 		}
 		return tx.Delete(&item).Error

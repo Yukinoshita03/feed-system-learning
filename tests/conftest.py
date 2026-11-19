@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from collections.abc import Callable, Iterator
 from typing import Any
 from uuid import uuid4
@@ -111,3 +112,20 @@ def login_account(
         return response.json()
 
     return login
+
+
+@pytest.fixture
+def await_video_counts(api_base_url, http):
+    """展示计数最终一致：在明确上限内等待投影，不能假定写接口返回总数。"""
+    def wait(video_id, **expected):
+        deadline = time.monotonic() + 15
+        latest = None
+        while time.monotonic() < deadline:
+            response = http.post(api_base_url + "/video/getDetail", json={"id": video_id}, timeout=10)
+            assert response.status_code == 200, response.text
+            latest = response.json()
+            if all(latest.get(key) == value for key, value in expected.items()):
+                return latest
+            time.sleep(0.05)
+        pytest.fail(f"计数投影未收敛：expected={expected}, actual={latest}")
+    return wait

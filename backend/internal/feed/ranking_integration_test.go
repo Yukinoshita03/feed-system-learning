@@ -44,7 +44,7 @@ func newRankingFixture(t *testing.T) *rankingFixture {
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	dbtest.Migrate(t, database,
-		&account.Account{}, &video.Video{}, &video.Like{}, &video.Favorite{}, &video.Comment{},
+		&account.Account{}, &video.Video{}, &video.VideoCounter{}, &video.VideoCounterConsumption{}, &video.Like{}, &video.Favorite{}, &video.Comment{},
 		&video.VideoView{}, &video.InteractionHourly{})
 
 	tx := database.Begin()
@@ -95,7 +95,7 @@ func (f *rankingFixture) publish(t *testing.T, title string) video.Video {
 		AuthorID: f.author, Title: title,
 		PlayURL: "/static/rank.mp4", CoverURL: "/static/rank.png",
 	}
-	if err := f.db.Create(&item).Error; err != nil {
+	if err := video.NewVideoRepository(f.db, nil).CreateVideo(context.Background(), &item); err != nil {
 		t.Fatal(err)
 	}
 	return item
